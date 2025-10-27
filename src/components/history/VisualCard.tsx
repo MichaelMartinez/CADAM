@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Clock,
@@ -95,7 +95,28 @@ export function VisualCard({
 }: VisualCardProps) {
   const [artifactCode, setArtifactCode] = useState<string | null>(null);
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null);
+  const [isVisible, setIsVisible] = useState(false);
+  const cardRef = useRef<HTMLDivElement>(null);
   const { compileScad, isCompiling, output, isError } = useOpenSCAD();
+
+  useEffect(() => {
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        setIsVisible(entry.isIntersecting);
+      },
+      { rootMargin: '100px' },
+    );
+
+    if (cardRef.current) {
+      observer.observe(cardRef.current);
+    }
+
+    return () => {
+      if (cardRef.current) {
+        observer.unobserve(cardRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const fetchLastArtifact = async () => {
@@ -176,10 +197,17 @@ export function VisualCard({
   }, [output]);
 
   return (
-    <div className="group relative overflow-hidden rounded-xl border-2 border-adam-neutral-700 bg-adam-background-2 transition-all duration-200 hover:border-adam-blue hover:shadow-[0_0_20px_rgba(255,85,167,0.3)]">
+    <div
+      ref={cardRef}
+      className="group relative overflow-hidden rounded-xl border-2 border-adam-neutral-700 bg-adam-background-2 transition-all duration-200 hover:border-adam-blue hover:shadow-[0_0_20px_rgba(255,85,167,0.3)]"
+    >
       <Link to={`/editor/${conversation.id}`}>
         <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-adam-background-1 to-adam-background-2">
-          {isCompiling ? (
+          {!isVisible ? (
+            <div className="flex h-full w-full items-center justify-center">
+              <Box className="text-adam-neutral-600 h-16 w-16 opacity-30" />
+            </div>
+          ) : isCompiling ? (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="flex flex-col items-center gap-2">
                 <Loader2 className="h-8 w-8 animate-spin text-adam-blue" />
