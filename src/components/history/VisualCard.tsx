@@ -106,7 +106,7 @@ export function VisualCard({
           .eq('conversation_id', conversation.id)
           .eq('role', 'assistant')
           .order('created_at', { ascending: false })
-          .limit(10);
+          .limit(50);
 
         if (error) throw error;
 
@@ -149,17 +149,30 @@ export function VisualCard({
   }, [artifactCode, compileScad]);
 
   useEffect(() => {
+    let isMounted = true;
+
     if (output && output instanceof Blob) {
-      output.arrayBuffer().then((buffer) => {
-        const loader = new STLLoader();
-        const geom = loader.parse(buffer);
-        geom.center();
-        geom.computeVertexNormals();
-        setGeometry(geom);
-      });
+      output
+        .arrayBuffer()
+        .then((buffer) => {
+          if (isMounted) {
+            const loader = new STLLoader();
+            const geom = loader.parse(buffer);
+            geom.center();
+            geom.computeVertexNormals();
+            setGeometry(geom);
+          }
+        })
+        .catch((error) => {
+          console.error('Error loading STL:', error);
+        });
     } else {
       setGeometry(null);
     }
+
+    return () => {
+      isMounted = false;
+    };
   }, [output]);
 
   return (
