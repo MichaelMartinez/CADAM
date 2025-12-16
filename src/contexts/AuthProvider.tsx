@@ -3,6 +3,12 @@ import { Session, User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
 import { AuthContext } from './AuthContext';
 
+// Get the redirect URL for OAuth callbacks (handles /cadam base path)
+const getRedirectUrl = () => {
+  const base = import.meta.env.BASE_URL || '/';
+  return `${window.location.origin}${base.endsWith('/') ? base.slice(0, -1) : base}`;
+};
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(
     JSON.parse(localStorage.getItem('session') ?? 'null'),
@@ -32,6 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       // The identity exists on another account, so sign in instead of linking
       supabase.auth.signInWithOAuth({
         provider: 'google',
+        options: { redirectTo: getRedirectUrl() },
       });
     }
   }, []);
@@ -97,7 +104,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Always try to link identity first (for anonymous users)
     // If the identity already exists, the redirect will return an error
     // which is handled by the useEffect above
-    await supabase.auth.linkIdentity({ provider: 'google' });
+    await supabase.auth.linkIdentity({
+      provider: 'google',
+      options: { redirectTo: getRedirectUrl() },
+    });
   };
 
   const verifyOtp = async (email: string, token: string) => {
