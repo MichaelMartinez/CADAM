@@ -11,6 +11,11 @@ import { useSendContentMutation } from '@/services/messageService';
 import { useBlob } from '@/contexts/BlobContext';
 import { useMeshFiles } from '@/contexts/MeshFilesContext';
 import { OpenSCADErrorDisplay } from '@/components/viewer/OpenSCADErrorDisplay';
+import { CompilationProgress } from '../chat/CompilationProgress';
+import { Button } from '../ui/button';
+import { FileCode, Terminal } from 'lucide-react';
+import { CompilationConsole } from '../chat/CompilationConsole';
+import { CompilationEvent } from '@/worker/types';
 
 // Extract import() filenames from OpenSCAD code
 function extractImportFilenames(code: string): string[] {
@@ -27,15 +32,32 @@ export function OpenSCADViewer() {
   const { conversation } = useConversation();
   const { currentMessage } = useCurrentMessage();
   const { setBlob } = useBlob();
-  const { compileScad, writeFile, output, isError, error } = useOpenSCAD();
+  const {
+    compileScad,
+    writeFile,
+    output,
+    isError,
+    error,
+    isCompiling,
+    compilationEvents,
+  } = useOpenSCAD();
   const { getMeshFile, hasMeshFile } = useMeshFiles();
   const [geometry, setGeometry] = useState<BufferGeometry | null>(null);
+  const [showConsole, setShowConsole] = useState(false);
+  const [showScadCode, setShowScadCode] = useState(false);
+  const [consoleEvents, setConsoleEvents] = useState<CompilationEvent[]>([]);
   const { mutate: sendMessage } = useSendContentMutation({ conversation });
   // Track which files (and their versions) we've written to avoid re-writing
   // Maps filename -> Blob instance
   const writtenFilesRef = useRef<Map<string, Blob>>(new Map());
 
   const scadCode = currentMessage?.content.artifact?.code;
+
+  useEffect(() => {
+    if (compilationEvents.length > 0) {
+      setConsoleEvents(compilationEvents);
+    }
+  }, [compilationEvents]);
 
   useEffect(() => {
     if (!scadCode) return;
@@ -105,28 +127,75 @@ export function OpenSCADViewer() {
   const isLastMessage =
     conversation.current_message_leaf_id === currentMessage?.id;
 
+  const renderMainContent = () => {
+    if (isCompiling && !geometry) {
+      return (
+        <div className="flex h-full w-full items-center justify-center">
+          <CompilationProgress events={compilationEvents} />
+        </div>
+      );
+    }
+
+    if (geometry) {
+      return <ThreeScene geometry={geometry} />;
+    }
+
+    if (isError && error && error.name === 'OpenSCADError') {
+      return (
+        <OpenSCADErrorDisplay
+          error={error as OpenSCADError}
+          onFixWithAI={
+            isLastMessage ? () => fixError(error as OpenSCADError) : undefined
+          }
+        />
+      );
+    }
+
+    return null;
+  };
+
   return (
-    <div className="h-full w-full bg-adam-neutral-700/50 shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out">
-      <div className="h-full w-full">
-        {geometry ? (
-          <div className="h-full w-full">
-            <ThreeScene geometry={geometry} />
-          </div>
-        ) : (
-          <>
-            {isError && error && error.name === 'OpenSCADError' && (
-              <OpenSCADErrorDisplay
-                error={error as OpenSCADError}
-                onFixWithAI={
-                  isLastMessage
-                    ? () => fixError(error as OpenSCADError)
-                    : undefined
-                }
-              />
-            )}
-          </>
-        )}
-      </div>
+    <div className="relative h-full w-full bg-adam-neutral-700/50 shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out">
+      <div className="h-full w-full">{renderMainContent()}</div>
+
+      {(consoleEvents.length > 0 || scadCode) && (
+        <div className="absolute bottom-2 left-2 flex gap-2">
+          {scadCode && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowScadCode(!showScadCode)}
+              className="bg-adam-bg-secondary-dark/50 text-adam-text-primary backdrop-blur-sm hover:bg-adam-bg-secondary-dark/80"
+            >
+              <FileCode className="h-5 w-5" />
+            </Button>
+          )}
+          {consoleEvents.length > 0 && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setShowConsole(!showConsole)}
+              className="bg-adam-bg-secondary-dark/50 text-adam-text-primary backdrop-blur-sm hover:bg-adam-bg-secondary-dark/80"
+            >
+              <Terminal className="h-5 w-5" />
+            </Button>
+          )}
+        </div>
+      )}
+
+      {showConsole && (
+        <div className="absolute bottom-12 left-2 right-2 max-h-[50%] overflow-y-auto rounded-lg bg-adam-bg-secondary-dark/50 p-2 backdrop-blur-sm">
+          <CompilationConsole events={consoleEvents} />
+        </div>
+      )}
+
+      {showScadCode && (
+        <div className="absolute left-2 right-2 top-2 max-h-[50%] overflow-y-auto rounded-lg bg-adam-bg-secondary-dark/50 p-2 backdrop-blur-sm">
+          <pre className="text-xs text-adam-text-primary">
+            <code>{scadCode}</code>
+          </pre>
+        </div>
+      )}
     </div>
   );
 }
