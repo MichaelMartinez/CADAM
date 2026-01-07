@@ -58,6 +58,7 @@ self.onmessage = async (
         message: error.message,
         code: error.code,
         stdErr: error.stdErr,
+        stdOut: error.stdOut,
       };
     } else {
       err = error instanceof Error ? error : new Error('Unknown error');

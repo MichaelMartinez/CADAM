@@ -1,5 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { WorkerMessage, WorkerMessageType } from '@/worker/types';
+import {
+  WorkerMessage,
+  WorkerMessageType,
+  CompilationEvent,
+} from '@/worker/types';
 import OpenSCADError from '@/lib/OpenSCADError';
 
 // Type for pending request resolvers
@@ -13,6 +17,9 @@ export function useOpenSCAD() {
   const [error, setError] = useState<OpenSCADError | Error | undefined>();
   const [isError, setIsError] = useState(false);
   const [output, setOutput] = useState<Blob | undefined>();
+  const [compilationEvents, setCompilationEvents] = useState<
+    CompilationEvent[]
+  >([]);
   const workerRef = useRef<Worker | null>(null);
   // Track files written to the worker filesystem
   const writtenFilesRef = useRef<Set<string>>(new Set());
@@ -31,6 +38,13 @@ export function useOpenSCAD() {
 
   const eventHandler = useCallback((event: MessageEvent) => {
     const { id, type, err } = event.data;
+
+    // Handle compilation events
+    if (type === 'compilation.event') {
+      const compilationEvent = event.data.event as CompilationEvent;
+      setCompilationEvents((prev) => [...prev, compilationEvent]);
+      return;
+    }
 
     // Check if this is a response to a pending request (fs operations)
     if (id && pendingRequestsRef.current.has(id)) {
@@ -51,7 +65,18 @@ export function useOpenSCAD() {
       type === WorkerMessageType.EXPORT
     ) {
       if (err) {
-        setError(err);
+        // Reconstruct OpenSCADError instance if needed
+        if (err.name === 'OpenSCADError') {
+          const reconstructedError = new OpenSCADError(
+            err.message,
+            err.code,
+            err.stdErr,
+            err.stdOut,
+          );
+          setError(reconstructedError);
+        } else {
+          setError(err);
+        }
         setIsError(true);
         setOutput(undefined);
       } else if (event.data.data?.output) {
@@ -147,6 +172,7 @@ export function useOpenSCAD() {
       setIsCompiling(true);
       setError(undefined);
       setIsError(false);
+      setCompilationEvents([]); // Reset events
 
       const worker = getWorker();
       // Note: Event listener is already added in useEffect, no need to add again
@@ -174,5 +200,6 @@ export function useOpenSCAD() {
     output,
     error,
     isError,
+    compilationEvents,
   };
 }

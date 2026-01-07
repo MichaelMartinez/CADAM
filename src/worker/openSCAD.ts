@@ -7,6 +7,8 @@ import {
   FileSystemWorkerMessageData,
   OpenSCADWorkerMessageData,
   OpenSCADWorkerResponseData,
+  CompilationEvent,
+  CompilationEventType,
 } from './types';
 import OpenSCADError from '@/lib/OpenSCADError';
 import { libraries } from '@/lib/libraries.ts';
@@ -27,6 +29,13 @@ class OpenSCADWrapper {
   };
 
   files: WorkspaceFile[] = [];
+
+  private emitEvent(event: CompilationEvent): void {
+    self.postMessage({
+      type: 'compilation.event',
+      event,
+    });
+  }
 
   async getInstance(): Promise<OpenSCAD> {
     const instance = await openscad({
@@ -100,6 +109,19 @@ class OpenSCADWrapper {
 
   logger = (type: 'stdErr' | 'stdOut') => (text: string) => {
     this.log[type].push(text);
+
+    // Emit event for real-time streaming
+    this.emitEvent({
+      type:
+        type === 'stdErr'
+          ? CompilationEventType.STDERR
+          : CompilationEventType.STDOUT,
+      timestamp: Date.now(),
+      data: {
+        line: text,
+        isError: type === 'stdErr',
+      },
+    });
   };
 
   /**
@@ -284,10 +306,24 @@ class OpenSCADWrapper {
     this.log.stdErr = [];
     this.log.stdOut = [];
 
+    // Emit started event
+    this.emitEvent({
+      type: CompilationEventType.STARTED,
+      timestamp: Date.now(),
+      data: { message: 'Starting compilation...' },
+    });
+
     const inputFile = '/input.scad';
     const outputFile = '/out.' + fileType;
     const instance = await this.getInstance();
     const importLibraries: string[] = [];
+
+    // Emit parsing event
+    this.emitEvent({
+      type: CompilationEventType.PARSING,
+      timestamp: Date.now(),
+      data: { message: 'Parsing OpenSCAD code...' },
+    });
 
     // Write the code to a file
     instance.FS.writeFile(inputFile, code);
@@ -301,6 +337,13 @@ class OpenSCADWrapper {
         !importLibraries.includes(library.name)
       ) {
         importLibraries.push(library.name);
+
+        // Emit library loading event
+        this.emitEvent({
+          type: CompilationEventType.LIBRARY_LOADING,
+          timestamp: Date.now(),
+          data: { library: library.name },
+        });
 
         try {
           const response = await fetch(library.url);
@@ -336,11 +379,25 @@ class OpenSCADWrapper {
                 instance.FS.writeFile(path, new Int8Array(blob));
               }),
           );
+
+          // Emit library loaded event
+          this.emitEvent({
+            type: CompilationEventType.LIBRARY_LOADED,
+            timestamp: Date.now(),
+            data: { library: library.name },
+          });
         } catch (error) {
           console.error('Error importing library', library.name, error);
         }
       }
     }
+
+    // Emit rendering event
+    this.emitEvent({
+      type: CompilationEventType.RENDERING,
+      timestamp: Date.now(),
+      data: { message: 'Rendering geometry...' },
+    });
 
     const args = [inputFile, '-o', outputFile, ...parameters];
     let exitCode;
@@ -371,8 +428,16 @@ class OpenSCADWrapper {
         'Adam did not exit correctly',
         code,
         this.log.stdErr,
+        this.log.stdOut,
       );
     }
+
+    // Emit completion event
+    this.emitEvent({
+      type: CompilationEventType.COMPLETED,
+      timestamp: Date.now(),
+      data: { message: 'Compilation completed successfully' },
+    });
 
     return {
       output,

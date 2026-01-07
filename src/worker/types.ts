@@ -4,6 +4,31 @@ import WorkspaceFile from '../lib/WorkspaceFile.ts';
 // Credit
 // https://github.com/seasick/openscad-web-gui/blob/main/src/worker/types.ts
 
+export enum CompilationEventType {
+  STARTED = 'compilation.started',
+  PARSING = 'compilation.parsing',
+  LIBRARY_LOADING = 'compilation.library_loading',
+  LIBRARY_LOADED = 'compilation.library_loaded',
+  STDOUT = 'compilation.stdout',
+  STDERR = 'compilation.stderr',
+  RENDERING = 'compilation.rendering',
+  EXPORTING = 'compilation.exporting',
+  COMPLETED = 'compilation.completed',
+  ERROR = 'compilation.error',
+}
+
+export type CompilationEvent = {
+  type: CompilationEventType;
+  timestamp: number;
+  data?: {
+    message?: string;
+    library?: string;
+    progress?: number;
+    line?: string;
+    isError?: boolean;
+  };
+};
+
 export const enum WorkerMessageType {
   PREVIEW = 'preview',
   EXPORT = 'export',
@@ -28,12 +53,13 @@ export type WorkerMessage = {
 
 export type WorkerResponseMessage = {
   id: string | number;
-  type: WorkerMessageType;
+  type: WorkerMessageType | 'compilation.event';
   data:
     | OpenSCADWorkerResponseData
     | FileSystemWorkerMessageData
     | boolean
     | null;
+  event?: CompilationEvent;
   err?: Error;
 };
 

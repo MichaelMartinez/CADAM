@@ -5,7 +5,6 @@ import TextAreaChat from '@/components/TextAreaChat';
 import { AssistantMessage } from '@/components/chat/AssistantMessage';
 import { UserMessage } from '@/components/chat/UserMessage';
 import { useConversation } from '@/services/conversationService';
-import { AssistantLoading } from '@/components/chat/AssistantLoading';
 import { ChatTitle } from '@/components/chat/ChatTitle';
 import { TreeNode } from '@shared/Tree';
 import { PARAMETRIC_MODELS } from '@/lib/utils';
@@ -13,6 +12,10 @@ import {
   useIsLoading,
   useSendContentMutation,
 } from '@/services/messageService';
+import { CompilationProgress } from '@/components/chat/CompilationProgress';
+import { useOpenSCAD } from '@/hooks/useOpenSCAD';
+import { Avatar, AvatarImage } from '@/components/ui/avatar';
+import { AnimatedEllipsis } from '@/components/chat/AnimatedEllipsis';
 
 interface ChatSectionProps {
   messages: TreeNode<Message>[];
@@ -24,11 +27,14 @@ export function ChatSection({ messages }: ChatSectionProps) {
   const [model, setModel] = useState<Model>(PARAMETRIC_MODELS[0].id);
   const isLoading = useIsLoading();
   const { mutate: sendMessage } = useSendContentMutation({ conversation });
+  const { compilationEvents, isCompiling } = useOpenSCAD();
 
   // Sync model selection with the conversation history (last used model)
   useEffect(() => {
     if (messages.length > 0) {
-      const lastAssistantMessage = [...messages].reverse().find((m) => m.role === 'assistant');
+      const lastAssistantMessage = [...messages]
+        .reverse()
+        .find((m) => m.role === 'assistant');
       if (lastAssistantMessage?.content?.model) {
         setModel(lastAssistantMessage.content.model);
       }
@@ -106,7 +112,25 @@ export function ChatSection({ messages }: ChatSectionProps) {
             );
           })}
           {isLoading && lastMessage?.role !== 'assistant' && (
-            <AssistantLoading />
+            <div className="flex w-full p-1">
+              <div className="mr-2 mt-1">
+                <Avatar className="h-9 w-9 border border-adam-neutral-700 bg-adam-neutral-950 p-1.5">
+                  <AvatarImage
+                    src={`${import.meta.env.BASE_URL}/adam-logo.svg`}
+                    alt="Adam"
+                  />
+                </Avatar>
+              </div>
+              <div className="max-w-[80%] rounded-lg bg-adam-neutral-800">
+                {isCompiling && compilationEvents.length > 0 ? (
+                  <CompilationProgress events={compilationEvents} />
+                ) : (
+                  <div className="flex flex-col items-center justify-center gap-2 p-3">
+                    <AnimatedEllipsis color="adam-neutral" />
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </ScrollArea>
