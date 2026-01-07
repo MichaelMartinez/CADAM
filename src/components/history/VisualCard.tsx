@@ -107,13 +107,14 @@ export function VisualCard({
       { rootMargin: '100px' },
     );
 
-    if (cardRef.current) {
-      observer.observe(cardRef.current);
+    const currentCard = cardRef.current;
+    if (currentCard) {
+      observer.observe(currentCard);
     }
 
     return () => {
-      if (cardRef.current) {
-        observer.unobserve(cardRef.current);
+      if (currentCard) {
+        observer.unobserve(currentCard);
       }
     };
   }, []);
@@ -201,7 +202,7 @@ export function VisualCard({
       ref={cardRef}
       className="group relative overflow-hidden rounded-xl border-2 border-adam-neutral-700 bg-adam-background-2 transition-all duration-200 hover:border-adam-blue hover:shadow-[0_0_20px_rgba(0,166,255,0.3)]"
     >
-      <Link to={`/editor/${conversation.id}`}>
+      <Link to={`/history/${conversation.id}`}>
         <div className="relative aspect-square w-full overflow-hidden bg-gradient-to-br from-adam-background-1 to-adam-background-2">
           {!isVisible ? (
             <div className="flex h-full w-full items-center justify-center">

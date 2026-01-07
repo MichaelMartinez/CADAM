@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MessageSquare, Plus, LayoutGrid, List } from 'lucide-react';
+import { MessageSquare, Plus, LayoutGrid, List, Upload } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,6 +15,8 @@ import { HistoryConversation } from '@/types/misc';
 import { ConversationCard } from '@/components/history/ConversationCard';
 import { VisualCard } from '@/components/history/VisualCard';
 import { RenameDialogDrawer } from '@/components/history/RenameDialogDrawer';
+import { ScadUploadModal } from '@/components/history/ScadUploadModal';
+import { useSendContentMutation } from '@/services/messageService';
 
 export function HistoryView() {
   const [searchQuery, setSearchQuery] = useState('');
@@ -23,6 +25,7 @@ export function HistoryView() {
     useState<Conversation | null>(null);
   const [newTitle, setNewTitle] = useState('');
   const [open, setOpen] = useState(false);
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const navigate = useNavigate();
   const { user } = useAuth();
   const { toast } = useToast();
@@ -36,11 +39,44 @@ export function HistoryView() {
   };
 
   const conversationQuery = useQuery<HistoryConversation[]>({
-    queryKey: ['conversations'],
+    queryKey: ['conversations', viewMode],
     enabled: !!user,
     queryFn: async () => {
-      const { data: conversationsData, error: conversationsError } =
-        await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let conversationsData: any[] | null = null;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let conversationsError: any = null;
+
+      if (viewMode === 'visual') {
+        const { data: messages, error: messagesError } = await supabase
+          .from('messages')
+          .select('conversation_id')
+          .not('content', 'is', null)
+          .not('content->artifact', 'is', null)
+          .not('content->artifact->code', 'is', null)
+          .eq('role', 'assistant');
+
+        if (messagesError) throw messagesError;
+
+        const conversationIds = [
+          ...new Set(messages.map((m) => m.conversation_id)),
+        ];
+
+        const { data, error } = await supabase
+          .from('conversations')
+          .select(
+            `*, first_message:messages(content), messagesCount:messages(count)`,
+          )
+          .in('id', conversationIds)
+          .eq('user_id', user?.id ?? '')
+          .order('updated_at', { ascending: false })
+          .order('created_at', { ascending: false })
+          .limit(1, { referencedTable: 'first_message' });
+
+        conversationsData = data;
+        conversationsError = error;
+      } else {
+        const { data, error } = await supabase
           .from('conversations')
           .select(
             `*, first_message:messages(content), messagesCount:messages(count)`,
@@ -50,7 +86,12 @@ export function HistoryView() {
           .order('created_at', { ascending: false })
           .limit(1, { referencedTable: 'first_message' });
 
+        conversationsData = data;
+        conversationsError = error;
+      }
+
       if (conversationsError) throw conversationsError;
+      if (!conversationsData) return [];
 
       const formattedConversations = conversationsData.map((conv) => {
         const rawContent = conv.first_message?.[0]?.content;
@@ -76,6 +117,130 @@ export function HistoryView() {
       });
 
       return formattedConversations;
+    },
+  });
+
+  const { mutate: sendMessage } = useSendContentMutation({
+    conversation: {
+      id: '',
+      user_id: user?.id ?? '',
+      current_message_leaf_id: null,
+    },
+  });
+
+  const { mutate: handleCreateConversation } = useMutation({
+    mutationFn: async ({ code, title }: { code: string; title: string }) => {
+      const newConversationId = crypto.randomUUID();
+      // Create conversation
+      const { data: conversation, error: conversationError } = await supabase
+        .from('conversations')
+        .insert([
+          {
+            id: newConversationId,
+            user_id: user?.id ?? '',
+            title: title,
+          },
+        ])
+        .select()
+        .single();
+
+      if (conversationError) throw conversationError;
+
+      const content: Content = {
+        text: `Uploaded from ${title}`,
+        artifact: {
+          code,
+          title: title,
+          version: '1.0.0',
+          parameters: [],
+        },
+      };
+
+      sendMessage({
+        ...content,
+        conversation_id: newConversationId,
+      } as Content & { conversation_id: string });
+
+      return {
+        conversationId: conversation.id,
+      };
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      navigate(`/editor/${data.conversationId}`);
+    },
+    onError: (error) => {
+      console.error(error);
+      toast({
+        title: 'Error',
+        description:
+          error instanceof Error
+            ? error.message
+            : 'Failed to create conversation',
+        variant: 'destructive',
+      });
+    },
+  });
+
+  const { mutate: handleSaveDraft } = useMutation({
+    mutationFn: async ({ code, title }: { code: string; title: string }) => {
+      const newConversationId = crypto.randomUUID();
+      // Create conversation
+      const { data: conversation, error: conversationError } = await supabase
+        .from('conversations')
+        .insert([
+          {
+            id: newConversationId,
+            user_id: user?.id ?? '',
+            title: title,
+          },
+        ])
+        .select()
+        .single();
+
+      if (conversationError) throw conversationError;
+
+      const content: Content = {
+        text: `Uploaded from ${title}`,
+        artifact: {
+          code,
+          title: title,
+          version: '1.0.0',
+          parameters: [],
+        },
+      };
+
+      // Create the first message for the conversation
+      const { error: messageError } = await supabase.from('messages').insert([
+        {
+          conversation_id: newConversationId,
+          role: 'assistant',
+          content: content,
+        },
+      ]);
+
+      if (messageError) throw messageError;
+
+      return {
+        conversationId: conversation.id,
+      };
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      toast({
+        title: 'Success',
+        description: 'Draft saved successfully',
+      });
+      setIsUploadModalOpen(false);
+    },
+    onError: (error) => {
+      console.error(error);
+      toast({
+        title: 'Error',
+        description:
+          error instanceof Error ? error.message : 'Failed to save draft',
+        variant: 'destructive',
+      });
     },
   });
 
@@ -111,17 +276,22 @@ export function HistoryView() {
         });
     },
     onMutate: async (conversationId) => {
-      await queryClient.cancelQueries({ queryKey: ['conversations'] });
-      const previousConversations = queryClient.getQueryData(['conversations']);
+      await queryClient.cancelQueries({
+        queryKey: ['conversations', viewMode],
+      });
+      const previousConversations = queryClient.getQueryData([
+        'conversations',
+        viewMode,
+      ]);
       queryClient.setQueryData(
-        ['conversations'],
-        (old: HistoryConversation[]) =>
-          old.filter((conv) => conv.id !== conversationId),
+        ['conversations', viewMode],
+        (old: HistoryConversation[] | undefined) =>
+          old?.filter((conv) => conv.id !== conversationId) ?? [],
       );
       return { previousConversations };
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', viewMode] });
       toast({
         title: 'Success',
         description: 'Conversation deleted successfully',
@@ -130,7 +300,7 @@ export function HistoryView() {
     onError: (error: unknown, _conversationId: string, context) => {
       console.error('Error deleting conversation:', error);
       queryClient.setQueryData(
-        ['conversations'],
+        ['conversations', viewMode],
         context?.previousConversations,
       );
       toast({
@@ -157,19 +327,24 @@ export function HistoryView() {
       if (error) throw error;
     },
     onMutate: async ({ conversationId, newTitle }) => {
-      await queryClient.cancelQueries({ queryKey: ['conversations'] });
-      const previousConversations = queryClient.getQueryData(['conversations']);
+      await queryClient.cancelQueries({
+        queryKey: ['conversations', viewMode],
+      });
+      const previousConversations = queryClient.getQueryData([
+        'conversations',
+        viewMode,
+      ]);
       queryClient.setQueryData(
-        ['conversations'],
-        (old: HistoryConversation[]) =>
-          old.map((conv) =>
+        ['conversations', viewMode],
+        (old: HistoryConversation[] | undefined) =>
+          old?.map((conv) =>
             conv.id === conversationId ? { ...conv, title: newTitle } : conv,
-          ),
+          ) ?? [],
       );
       return { previousConversations };
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['conversations'] });
+      queryClient.invalidateQueries({ queryKey: ['conversations', viewMode] });
       toast({
         title: 'Success',
         description: 'Conversation renamed successfully',
@@ -180,7 +355,7 @@ export function HistoryView() {
     onError: (error: unknown, _variables, context) => {
       console.error('Error renaming conversation:', error);
       queryClient.setQueryData(
-        ['conversations'],
+        ['conversations', viewMode],
         context?.previousConversations,
       );
       toast({
@@ -244,35 +419,43 @@ export function HistoryView() {
             <h1 className="flex items-center gap-2 px-2 text-2xl font-medium text-adam-neutral-10">
               Past Creations
             </h1>
-
-            {/* View Toggle */}
-            <div className="flex items-center gap-2 rounded-lg border border-adam-neutral-700 bg-adam-background-2 p-1">
+            <div className="flex items-center gap-2">
               <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setViewMode('list')}
-                className={`h-8 px-3 ${
-                  viewMode === 'list'
-                    ? 'bg-adam-neutral-950 text-adam-neutral-50'
-                    : 'text-adam-neutral-400 hover:bg-transparent hover:text-adam-neutral-50'
-                }`}
+                variant="outline"
+                onClick={() => setIsUploadModalOpen(true)}
               >
-                <List className="mr-2 h-4 w-4" />
-                List
+                <Upload className="mr-2 h-4 w-4" />
+                Upload SCAD
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setViewMode('visual')}
-                className={`h-8 px-3 ${
-                  viewMode === 'visual'
-                    ? 'bg-adam-neutral-950 text-adam-neutral-50'
-                    : 'text-adam-neutral-400 hover:bg-transparent hover:text-adam-neutral-50'
-                }`}
-              >
-                <LayoutGrid className="mr-2 h-4 w-4" />
-                Visual
-              </Button>
+              {/* View Toggle */}
+              <div className="flex items-center gap-2 rounded-lg border border-adam-neutral-700 bg-adam-background-2 p-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setViewMode('list')}
+                  className={`h-8 px-3 ${
+                    viewMode === 'list'
+                      ? 'bg-adam-neutral-950 text-adam-neutral-50'
+                      : 'text-adam-neutral-400 hover:bg-transparent hover:text-adam-neutral-50'
+                  }`}
+                >
+                  <List className="mr-2 h-4 w-4" />
+                  List
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setViewMode('visual')}
+                  className={`h-8 px-3 ${
+                    viewMode === 'visual'
+                      ? 'bg-adam-neutral-950 text-adam-neutral-50'
+                      : 'text-adam-neutral-400 hover:bg-transparent hover:text-adam-neutral-50'
+                  }`}
+                >
+                  <LayoutGrid className="mr-2 h-4 w-4" />
+                  Visual
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -392,6 +575,14 @@ export function HistoryView() {
         newTitle={newTitle}
         onNewTitleChange={setNewTitle}
         onRename={handleRename}
+      />
+      <ScadUploadModal
+        open={isUploadModalOpen}
+        onOpenChange={setIsUploadModalOpen}
+        onCreateConversation={(code, title) =>
+          handleCreateConversation({ code, title })
+        }
+        onSaveDraft={(code, title) => handleSaveDraft({ code, title })}
       />
 
       <button

@@ -13,7 +13,12 @@ import { useState } from 'react';
 import { OrthographicPerspectiveToggle } from '@/components/viewer/OrthographicPerspectiveToggle';
 import { useColor } from '@/contexts/ColorContext';
 
-export function ThreeScene({ geometry }: { geometry: THREE.BufferGeometry }) {
+interface ThreeSceneProps {
+  geometry: THREE.BufferGeometry;
+  showControls?: boolean;
+}
+
+export function ThreeScene({ geometry, showControls = true }: ThreeSceneProps) {
   const { color } = useColor();
   const [isOrthographic, setIsOrthographic] = useState(true);
 
@@ -73,19 +78,23 @@ export function ThreeScene({ geometry }: { geometry: THREE.BufferGeometry }) {
           infiniteGrid={true}
         /> */}
         <OrbitControls makeDefault enableDamping={true} dampingFactor={0.05} />
-        <GizmoHelper alignment="bottom-right" margin={[80, 90]}>
-          <GizmoViewcube />
-        </GizmoHelper>
+        {showControls && (
+          <GizmoHelper alignment="bottom-right" margin={[80, 90]}>
+            <GizmoViewcube />
+          </GizmoHelper>
+        )}
       </Canvas>
 
-      <div className="absolute bottom-2 right-9 flex flex-col items-center">
-        <div className="flex items-center gap-2">
-          <OrthographicPerspectiveToggle
-            isOrthographic={isOrthographic}
-            onToggle={setIsOrthographic}
-          />
+      {showControls && (
+        <div className="absolute bottom-2 right-9 flex flex-col items-center">
+          <div className="flex items-center gap-2">
+            <OrthographicPerspectiveToggle
+              isOrthographic={isOrthographic}
+              onToggle={setIsOrthographic}
+            />
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

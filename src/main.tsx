@@ -10,6 +10,7 @@ import '@/index.css';
 import { ErrorView } from '@/views/ErrorView.tsx';
 import { PromptView } from '@/views/PromptView.tsx';
 import { HistoryView } from '@/views/HistoryView.tsx';
+import { ConversationGalleryView } from '@/views/ConversationGalleryView.tsx';
 import EditorView from '@/views/EditorView.tsx';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '@/contexts/AuthProvider.tsx';
@@ -39,6 +40,11 @@ const router = createBrowserRouter(
           path: '/history',
           errorElement: <ErrorView />,
           element: <HistoryView />,
+        },
+        {
+          path: '/history/:id',
+          errorElement: <ErrorView />,
+          element: <ConversationGalleryView />,
         },
         { path: '*', element: <Navigate to="/" replace /> },
       ],
