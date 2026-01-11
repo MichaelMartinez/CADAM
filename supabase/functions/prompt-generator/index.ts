@@ -4,7 +4,6 @@
 
 // Setup type definitions for built-in Supabase Runtime APIs
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
-import { Anthropic } from 'npm:@anthropic-ai/sdk';
 import { corsHeaders } from '../_shared/cors.ts';
 import 'jsr:@std/dotenv/load';
 import { getAnonSupabaseClient } from '../_shared/supabaseClient.ts';
@@ -12,6 +11,10 @@ import {
   buildParametricGeneratorPrompt,
   buildParametricEnhancerPrompt,
 } from '../_shared/prompts.ts';
+
+// OpenRouter API configuration
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_API_KEY = Deno.env.get('OPENROUTER_API_KEY') ?? '';
 
 // Use shared prompt module
 const PARAMETRIC_SYSTEM_PROMPT = buildParametricGeneratorPrompt();
@@ -65,11 +68,6 @@ Deno.serve(async (req) => {
     .json()
     .catch(() => ({}));
 
-  // Initialize Anthropic client for AI interactions
-  const anthropic = new Anthropic({
-    apiKey: Deno.env.get('ANTHROPIC_API_KEY') ?? '',
-  });
-
   try {
     let systemPrompt: string;
     let userPrompt: string;
@@ -87,26 +85,38 @@ Deno.serve(async (req) => {
       maxTokens = 100;
     }
 
-    // Configure Claude API call
-    const response = await anthropic.messages.create({
-      model: 'claude-3-haiku-20240307',
-      max_tokens: maxTokens,
-      system: systemPrompt,
-      messages: [
-        {
-          role: 'user',
-          content: userPrompt,
-        },
-      ],
+    // Call OpenRouter API
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+        'HTTP-Referer': 'https://adam-cad.com',
+        'X-Title': 'Adam CAD',
+      },
+      body: JSON.stringify({
+        model: 'anthropic/claude-3-haiku',
+        max_tokens: maxTokens,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ],
+      }),
     });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `OpenRouter API error: ${response.status} - ${errorText}`,
+      );
+    }
+
+    const data = await response.json();
 
     // Extract prompt from response
     let prompt = '';
-    if (Array.isArray(response.content) && response.content.length > 0) {
-      const lastContent = response.content[response.content.length - 1];
-      if (lastContent.type === 'text') {
-        prompt = lastContent.text.trim();
-      }
+    if (data.choices && data.choices[0]?.message?.content) {
+      prompt = data.choices[0].message.content.trim();
     }
 
     return new Response(JSON.stringify({ prompt }), {
@@ -114,7 +124,7 @@ Deno.serve(async (req) => {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (error) {
-    console.error('Error calling Claude:', error);
+    console.error('Error calling OpenRouter:', error);
 
     return new Response(
       JSON.stringify({
