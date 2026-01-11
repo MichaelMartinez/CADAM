@@ -22,6 +22,8 @@ allowed_mime_types = ["image/png", "image/jpeg", "image/jpg", "image/webp", "mod
 [auth]
 enable_anonymous_sign_ins = true
 enable_manual_linking = true
+site_url = "http://100.93.124.43:5173"
+additional_redirect_urls = ["http://localhost:5173"]
 
 [auth.email]
 enable_confirmations = true
