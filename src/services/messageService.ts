@@ -5,6 +5,7 @@ import {
   Conversation,
   Message,
   Model,
+  OutputMode,
   Parameter,
 } from '@shared/types';
 import { HistoryConversation } from '@/types/misc';
@@ -157,11 +158,13 @@ export function useParametricChatMutation({
       messageId,
       conversationId,
       thinking,
+      outputMode,
     }: {
       model: Model;
       messageId: string;
       conversationId: string;
       thinking?: boolean;
+      outputMode?: OutputMode;
     }) => {
       const newMessageId = crypto.randomUUID();
       let initialized = false;
@@ -183,6 +186,7 @@ export function useParametricChatMutation({
             model,
             newMessageId,
             thinking,
+            outputMode,
           }),
         },
       );
@@ -364,6 +368,7 @@ export function useSendContentMutation({
         messageId: userMessage.id,
         conversationId: conversation.id,
         thinking: content.thinking,
+        outputMode: content.outputMode,
       });
     },
   });
@@ -444,6 +449,7 @@ export function useEditMessageMutation() {
         messageId: userMessage.id,
         conversationId: conversation.id,
         thinking: updatedMessage.content.thinking,
+        outputMode: updatedMessage.content.outputMode,
       });
     },
     onError: (error) => {
@@ -451,7 +457,6 @@ export function useEditMessageMutation() {
     },
   });
 }
-
 
 export function useRetryMessageMutation() {
   const { conversation, updateConversationAsync } = useConversation();
@@ -462,7 +467,15 @@ export function useRetryMessageMutation() {
 
   return useMutation({
     mutationKey: ['retry-message', conversation.id],
-    mutationFn: async ({ model, id }: { model: Model; id: string }) => {
+    mutationFn: async ({
+      model,
+      id,
+      outputMode,
+    }: {
+      model: Model;
+      id: string;
+      outputMode?: OutputMode;
+    }) => {
       if (!updateConversationAsync) {
         throw new Error('Cannot update conversation');
       }
@@ -481,6 +494,7 @@ export function useRetryMessageMutation() {
         messageId: id,
         conversationId: conversation.id,
         thinking,
+        outputMode,
       });
     },
     onError: (error) => {

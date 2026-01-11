@@ -14,9 +14,12 @@ import {
   CircleX,
   Box,
   Wand2,
+  Printer,
+  Layers,
 } from 'lucide-react';
 import { cn, PARAMETRIC_MODELS } from '@/lib/utils';
-import { Content, Conversation, Model } from '@shared/types';
+import { Content, Conversation, Model, OutputMode } from '@shared/types';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { MessageItem } from '@/types/misc';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -81,6 +84,9 @@ function TextAreaChat({
   // Check if current model supports thinking
   const selectedModelConfig = PARAMETRIC_MODELS.find((m) => m.id === model);
   const supportsThinking = selectedModelConfig?.supportsThinking ?? false;
+
+  // Output mode: 'printable' (manifold, watertight) or 'assembly' (multi-part visualization)
+  const [outputMode, setOutputMode] = useState<OutputMode>('printable');
 
   // Refs for the two hot-zones
   const topDropZoneRef = useRef<HTMLDivElement>(null);
@@ -149,6 +155,7 @@ function TextAreaChat({
       }),
       model: model,
       thinking: supportsThinking, // Automatically enable thinking for models that support it
+      outputMode: outputMode, // 3D printable vs multi-part assembly
     };
     onSubmit(content);
     setInput('');
@@ -932,6 +939,48 @@ function TextAreaChat({
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Output Mode Toggle */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <ToggleGroup
+                  type="single"
+                  value={outputMode}
+                  onValueChange={(value) => {
+                    if (value) setOutputMode(value as OutputMode);
+                  }}
+                  className="h-8"
+                  disabled={disabled}
+                >
+                  <ToggleGroupItem
+                    value="printable"
+                    aria-label="3D Printable mode"
+                    className={cn(
+                      'h-8 gap-1 px-2 text-xs data-[state=on]:bg-adam-blue/20 data-[state=on]:text-adam-blue',
+                      isFocused && 'data-[state=on]:bg-adam-blue/30',
+                    )}
+                  >
+                    <Printer className="h-3.5 w-3.5" />
+                    Print
+                  </ToggleGroupItem>
+                  <ToggleGroupItem
+                    value="assembly"
+                    aria-label="Multi-part Assembly mode"
+                    className={cn(
+                      'h-8 gap-1 px-2 text-xs data-[state=on]:bg-adam-blue/20 data-[state=on]:text-adam-blue',
+                      isFocused && 'data-[state=on]:bg-adam-blue/30',
+                    )}
+                  >
+                    <Layers className="h-3.5 w-3.5" />
+                    Assembly
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </TooltipTrigger>
+              <TooltipContent>
+                {outputMode === 'printable'
+                  ? '3D Printable: Manifold, watertight geometry'
+                  : 'Assembly: Multi-part visualization'}
+              </TooltipContent>
+            </Tooltip>
             <ModelSelector
               disabled={disabled}
               models={PARAMETRIC_MODELS}

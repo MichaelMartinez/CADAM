@@ -8,21 +8,13 @@ import { Anthropic } from 'npm:@anthropic-ai/sdk';
 import { corsHeaders } from '../_shared/cors.ts';
 import 'jsr:@std/dotenv/load';
 import { getAnonSupabaseClient } from '../_shared/supabaseClient.ts';
+import {
+  buildParametricGeneratorPrompt,
+  buildParametricEnhancerPrompt,
+} from '../_shared/prompts.ts';
 
-const PARAMETRIC_SYSTEM_PROMPT = `You generate ONE single prompt for an openscad parametric model. Rules:
-- Return EXACTLY ONE prompt, never a list or multiple options
-- Include specific dimensions (in mm) for key features
-- Mention customizable/parametric aspects (e.g. "adjustable width", "configurable holes")
-- Describe geometry that is 3D printable (flat bases, reasonable overhangs)
-- Return ONLY the prompt text - no introductory phrases, quotes, or explanations
-- Vary your sentence structure - don't always start with "a parametric..."
-
-Examples of CORRECT responses:
-"a hex-grid drawer organizer 150x50mm with adjustable wall thickness"
-"stackable storage box 100mm cube with slide-on lid"
-"cable clip for 5-10mm cables with screw mounting"
-
-NEVER return multiple prompts or a list. Only ONE single prompt.`;
+// Use shared prompt module
+const PARAMETRIC_SYSTEM_PROMPT = buildParametricGeneratorPrompt();
 
 // Main server function handling incoming requests
 Deno.serve(async (req) => {
@@ -84,15 +76,8 @@ Deno.serve(async (req) => {
     let maxTokens: number;
 
     if (existingText && existingText.length > 0) {
-      // Augment existing text for parametric mode
-      systemPrompt = `You enhance prompts for 3D printable parametric models. Rules:
-- Add specific dimensions (in mm) for all key features
-- Include multiple parametric variables (e.g., "customizable height", "variable screw size", "adjustable spacing")
-- Add details about geometry, mounting options, and practical features
-- Ensure the design is 3D printable (flat bottom, stable geometry)
-- Return ONLY the enhanced prompt text - no introductory phrases, explanations, or quotes
-- Be thorough and detailed in your enhancements`;
-
+      // Augment existing text for parametric mode (use shared prompt)
+      systemPrompt = buildParametricEnhancerPrompt();
       userPrompt = `Enhance this prompt: ${existingText}`;
       maxTokens = 300;
     } else {
