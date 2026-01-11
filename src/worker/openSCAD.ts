@@ -7,9 +7,11 @@ import {
   FileSystemWorkerMessageData,
   OpenSCADWorkerMessageData,
   OpenSCADWorkerResponseData,
+  WorkerMessageType,
 } from './types';
 import OpenSCADError from '@/lib/OpenSCADError';
 import { libraries } from '@/lib/libraries.ts';
+import { CompilationEvent, CompilationEventType } from '@shared/types';
 
 const fontsConf = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
@@ -27,6 +29,24 @@ class OpenSCADWrapper {
   };
 
   files: WorkspaceFile[] = [];
+
+  // Emit a compilation event to the main thread
+  private emitEvent(
+    type: CompilationEventType,
+    message: string,
+    extra?: Partial<Omit<CompilationEvent, 'type' | 'timestamp' | 'message'>>,
+  ) {
+    const event: CompilationEvent = {
+      type,
+      timestamp: Date.now(),
+      message,
+      ...extra,
+    };
+    self.postMessage({
+      type: WorkerMessageType.COMPILATION_EVENT,
+      event,
+    });
+  }
 
   async getInstance(): Promise<OpenSCAD> {
     const instance = await openscad({
@@ -100,6 +120,11 @@ class OpenSCADWrapper {
 
   logger = (type: 'stdErr' | 'stdOut') => (text: string) => {
     this.log[type].push(text);
+    // Emit stdout/stderr events for real-time streaming
+    this.emitEvent(
+      type === 'stdErr' ? 'compilation.stderr' : 'compilation.stdout',
+      text,
+    );
   };
 
   /**
@@ -284,6 +309,9 @@ class OpenSCADWrapper {
     this.log.stdErr = [];
     this.log.stdOut = [];
 
+    // Emit compilation started event
+    this.emitEvent('compilation.started', 'Starting compilation...');
+
     const inputFile = '/input.scad';
     const outputFile = '/out.' + fileType;
     const instance = await this.getInstance();
@@ -301,6 +329,11 @@ class OpenSCADWrapper {
         !importLibraries.includes(library.name)
       ) {
         importLibraries.push(library.name);
+
+        // Emit library loading event
+        this.emitEvent('library.loading', `Loading ${library.name}...`, {
+          library: library.name,
+        });
 
         try {
           const response = await fetch(library.url);
@@ -336,6 +369,11 @@ class OpenSCADWrapper {
                 instance.FS.writeFile(path, new Int8Array(blob));
               }),
           );
+
+          // Emit library loaded event
+          this.emitEvent('library.loaded', `Loaded ${library.name}`, {
+            library: library.name,
+          });
         } catch (error) {
           console.error('Error importing library', library.name, error);
         }
@@ -346,20 +384,34 @@ class OpenSCADWrapper {
     let exitCode;
     let output;
 
+    // Emit rendering event before compilation
+    this.emitEvent('compilation.rendering', 'Rendering geometry...');
+
     try {
       exitCode = instance.callMain(args);
     } catch (error) {
-      if (error instanceof Error) {
-        throw new Error('Adam exited with an error: ' + error.message);
-      } else {
-        throw new Error('Adam exited with an error');
-      }
+      // Emit error event
+      this.emitEvent('compilation.error', 'Compilation failed');
+      // Throw OpenSCADError to preserve accumulated logs
+      const errorMessage =
+        error instanceof Error
+          ? 'Adam exited with an error: ' + error.message
+          : 'Adam exited with an error';
+      throw new OpenSCADError(errorMessage, code, this.log.stdErr);
     }
+
+    const duration = Date.now() - start;
 
     if (exitCode === 0) {
       try {
         output = instance.FS.readFile(outputFile, { encoding: 'binary' });
+        // Emit completion event
+        this.emitEvent('compilation.complete', `Compiled in ${duration}ms`, {
+          duration,
+          exitCode,
+        });
       } catch (error) {
+        this.emitEvent('compilation.error', 'Failed to read output file');
         if (error instanceof Error) {
           throw new Error('Adam cannot read created file: ' + error.message);
         } else {
@@ -367,6 +419,8 @@ class OpenSCADWrapper {
         }
       }
     } else {
+      // Emit error event
+      this.emitEvent('compilation.error', 'Compilation failed', { exitCode });
       throw new OpenSCADError(
         'Adam did not exit correctly',
         code,
@@ -377,7 +431,7 @@ class OpenSCADWrapper {
     return {
       output,
       exitCode,
-      duration: Date.now() - start,
+      duration,
       log: this.log,
       fileType,
     };

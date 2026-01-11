@@ -19,6 +19,26 @@ export type ToolCall = {
   result?: { id: string };
 };
 
+// Compilation event types for OpenSCAD streaming progress
+export type CompilationEventType =
+  | 'compilation.started'
+  | 'library.loading'
+  | 'library.loaded'
+  | 'compilation.stdout'
+  | 'compilation.stderr'
+  | 'compilation.rendering'
+  | 'compilation.complete'
+  | 'compilation.error';
+
+export type CompilationEvent = {
+  type: CompilationEventType;
+  timestamp: number;
+  message: string;
+  library?: string;
+  duration?: number;
+  exitCode?: number;
+};
+
 export type Content = {
   text?: string;
   model?: Model;
@@ -39,6 +59,8 @@ export type Content = {
   toolCalls?: ToolCall[];
   thinking?: boolean;
   outputMode?: OutputMode;
+  // Compilation events for OpenSCAD streaming progress (persisted for history)
+  compilationEvents?: CompilationEvent[];
 };
 
 export type MeshFileType = string;

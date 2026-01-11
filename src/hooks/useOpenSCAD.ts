@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { WorkerMessage, WorkerMessageType } from '@/worker/types';
 import OpenSCADError from '@/lib/OpenSCADError';
+import { CompilationEvent } from '@shared/types';
 
 // Type for pending request resolvers
 type PendingRequest = {
@@ -8,16 +9,26 @@ type PendingRequest = {
   reject: (error: Error) => void;
 };
 
-export function useOpenSCAD() {
+export type UseOpenSCADOptions = {
+  onCompilationEvent?: (event: CompilationEvent) => void;
+};
+
+export function useOpenSCAD(options?: UseOpenSCADOptions) {
   const [isCompiling, setIsCompiling] = useState(false);
   const [error, setError] = useState<OpenSCADError | Error | undefined>();
   const [isError, setIsError] = useState(false);
   const [output, setOutput] = useState<Blob | undefined>();
+  const [compilationEvents, setCompilationEvents] = useState<
+    CompilationEvent[]
+  >([]);
   const workerRef = useRef<Worker | null>(null);
   // Track files written to the worker filesystem
   const writtenFilesRef = useRef<Set<string>>(new Set());
   // Track pending requests waiting for worker responses
   const pendingRequestsRef = useRef<Map<string, PendingRequest>>(new Map());
+  // Store options ref to avoid stale closures
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   const getWorker = useCallback(() => {
     if (!workerRef.current) {
@@ -31,6 +42,14 @@ export function useOpenSCAD() {
 
   const eventHandler = useCallback((event: MessageEvent) => {
     const { id, type, err } = event.data;
+
+    // Handle compilation events (streaming)
+    if (type === WorkerMessageType.COMPILATION_EVENT) {
+      const compilationEvent = event.data.event as CompilationEvent;
+      setCompilationEvents((prev) => [...prev, compilationEvent]);
+      optionsRef.current?.onCompilationEvent?.(compilationEvent);
+      return;
+    }
 
     // Check if this is a response to a pending request (fs operations)
     if (id && pendingRequestsRef.current.has(id)) {
@@ -60,6 +79,7 @@ export function useOpenSCAD() {
             event.data.data.fileType === 'stl' ? 'model/stl' : 'image/svg+xml',
         });
         setOutput(blob);
+        setIsError(false);
       }
       setIsCompiling(false);
     }
@@ -147,6 +167,7 @@ export function useOpenSCAD() {
       setIsCompiling(true);
       setError(undefined);
       setIsError(false);
+      setCompilationEvents([]); // Clear events for new compilation
 
       const worker = getWorker();
       // Note: Event listener is already added in useEffect, no need to add again
@@ -174,5 +195,6 @@ export function useOpenSCAD() {
     output,
     error,
     isError,
+    compilationEvents,
   };
 }

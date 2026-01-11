@@ -1,4 +1,4 @@
-import { Parameter } from '@shared/types';
+import { CompilationEvent, Parameter } from '@shared/types';
 import WorkspaceFile from '../lib/WorkspaceFile.ts';
 
 // Credit
@@ -10,7 +10,19 @@ export const enum WorkerMessageType {
   FS_READ = 'fs.read',
   FS_WRITE = 'fs.write',
   FS_UNLINK = 'fs.unlink',
+  COMPILATION_EVENT = 'compilation.event',
 }
+
+export type WorkerCompilationEventMessage = {
+  type: WorkerMessageType.COMPILATION_EVENT;
+  event: CompilationEvent;
+};
+
+// Request message types (main thread -> worker)
+type WorkerRequestMessageType = Exclude<
+  WorkerMessageType,
+  WorkerMessageType.COMPILATION_EVENT
+>;
 
 type WorkerMessageDataMap = {
   [WorkerMessageType.PREVIEW]: OpenSCADWorkerMessageData;
@@ -22,8 +34,8 @@ type WorkerMessageDataMap = {
 
 export type WorkerMessage = {
   id?: string | number;
-  type: WorkerMessageType;
-  data: WorkerMessageDataMap[WorkerMessage['type']];
+  type: WorkerRequestMessageType;
+  data: WorkerMessageDataMap[WorkerRequestMessageType];
 };
 
 export type WorkerResponseMessage = {

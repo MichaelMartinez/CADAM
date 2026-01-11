@@ -32,6 +32,8 @@ import {
   useRetryMessageMutation,
   useIsLoading,
 } from '@/services/messageService';
+import { CompilationProgress } from '@/components/chat/CompilationProgress';
+import { useCompilation } from '@/contexts/CompilationContext';
 
 interface AssistantMessageProps {
   message: TreeNode<Message>;
@@ -48,6 +50,19 @@ export function AssistantMessage({
   const { mutate: retryMessage } = useRetryMessageMutation();
   const isLoading = useIsLoading();
   const model = message.content.model ?? 'anthropic/claude-sonnet-4.5';
+  const { compilationEvents: liveEvents, isCompiling } = useCompilation();
+
+  // Determine if this message is currently being compiled
+  const isCurrentlyCompiling = currentMessage?.id === message.id && isCompiling;
+
+  // Use live events if this message is being compiled, otherwise use persisted events
+  const displayEvents = isCurrentlyCompiling
+    ? liveEvents
+    : (message.content.compilationEvents ?? []);
+
+  const showCompilationProgress =
+    (displayEvents.length > 0 || isCurrentlyCompiling) &&
+    message.content.artifact;
 
   const changeLeaf = useCallback(
     (messageId: string) => {
@@ -136,6 +151,12 @@ export function AssistantMessage({
                   currentMessage={currentMessage}
                   setCurrentMessage={setCurrentMessage}
                   currentVersion={currentVersion}
+                />
+              )}
+              {showCompilationProgress && (
+                <CompilationProgress
+                  events={displayEvents}
+                  isCompiling={isCurrentlyCompiling}
                 />
               )}
             </>
