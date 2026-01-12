@@ -914,3 +914,31 @@ input::placeholder {
     left: 100%;
   }
 }
+
+/* Source Mapping - Monaco Editor Highlighting */
+.source-mapping-highlighted-line {
+  background-color: rgba(255, 215, 0, 0.2) !important;
+  border-left: 3px solid #ffd700;
+}
+
+.source-mapping-highlighted-glyph {
+  background-color: #ffd700;
+  margin-left: 3px;
+  width: 4px !important;
+  border-radius: 2px;
+}
+
+/* Smooth transition for highlights */
+.monaco-editor .view-line {
+  transition: background-color 0.15s ease-out;
+}
+
+/* Code panel scrollbar styling */
+.monaco-editor .monaco-scrollable-element > .scrollbar > .slider {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+}
+
+.monaco-editor .monaco-scrollable-element > .scrollbar > .slider:hover {
+  background: rgba(255, 255, 255, 0.3);
+}

@@ -71,6 +71,13 @@ grid_copies(spacing=20, n=[3, 3])
   cyl(h=10, d=8);
 \`\`\`
 
+**Modular Design for Clarity:**
+- Use attach() to connect components: cuboid([50,50,20]) attach(TOP) cyl(h=30, d=15);
+- Each attachable component should be its own module
+- Document anchor relationships in module names or parameters
+- Example: module mounting_bracket(anchor=BOTTOM) { ... }
+- This structure makes code easier to understand and modify
+
 **Fallback**: Use standard OpenSCAD only when BOSL2 doesn't provide the needed functionality.
 `;
 
@@ -151,6 +158,48 @@ Just generate clean OpenSCAD code with appropriate technical comments.
 - Return ONLY raw OpenSCAD code. DO NOT wrap it in markdown code blocks (no \`\`\`openscad).
 Just return the plain OpenSCAD code directly.
 
+# Code Structure for Clarity (CRITICAL)
+You MUST structure your code with named modules for clear geometry-to-code mapping:
+
+**REQUIRED Pattern:**
+1. ALWAYS create a named module for EACH distinct geometric feature
+2. NEVER put primitives directly inside union()/difference() without a module wrapper
+3. Each module should create ONE logical part (a cone, a section, a ring, etc.)
+4. Use descriptive module names that identify the feature
+
+**WRONG - Do NOT do this:**
+\`\`\`
+difference() {
+  union() {
+    cyl(h=30, d1=40, d2=50);  // BAD: inline primitive
+    up(30) cyl(h=20, d=50);   // BAD: inline primitive
+  }
+  cyl(h=100, d=30);           // BAD: inline primitive
+}
+\`\`\`
+
+**CORRECT - Always do this:**
+\`\`\`
+module small_cone() { cyl(h=30, d1=40, d2=50, anchor=BOTTOM); }
+module transition() { up(30) cyl(h=20, d=50, anchor=BOTTOM); }
+module inner_bore() { cyl(h=100, d=30, anchor=BOTTOM); }
+
+difference() {
+  union() {
+    small_cone();
+    transition();
+  }
+  inner_bore();
+}
+\`\`\`
+
+**Why this matters:** Users can click on any face in the 3D viewer and the app will highlight the corresponding module in the code. Inline primitives cannot be mapped.
+
+Additional guidelines:
+- Use BOSL2 anchor points (BOTTOM, TOP, LEFT, RIGHT, FRONT, BACK) explicitly
+- Use attach() to connect components for clear parent-child relationships
+- Parameters should be declared at the top of the file
+
 # STL Import (CRITICAL)
 When the user uploads a 3D model (STL file) and you are told to use import():
 1. YOU MUST USE import("filename.stl") to include their original model - DO NOT recreate it
@@ -163,33 +212,69 @@ Orientation: Study the provided render images to determine the model's "up" dire
 - Look for features like: feet/base at bottom, head at top, front-facing details
 - Apply rotation to orient the model so it sits FLAT on any stand/base
 - Always include rotation parameters so the user can fine-tune
+
+# Image/Sketch Interpretation
+When the user uploads an image (photo, sketch, or drawing):
+1. Analyze the visual to understand the intended 3D geometry
+2. Identify key features: shape outlines, holes, mounting points, edges
+3. Estimate proportions and dimensions from the image context
+4. Generate parametric OpenSCAD code that captures the design intent
+5. Use appropriate primitives:
+   - cuboid() for rectangular/box shapes
+   - cyl() for cylindrical features, posts, holes
+   - prismoid() for tapered or angled shapes
+   - linear_extrude() for extruding 2D profiles
+6. Include parameters for all major dimensions so user can adjust
+7. Add comments identifying which image feature each code section represents
 `;
 
 const CODE_EXAMPLE = `
-**Example - Mug (using BOSL2):**
+**Example - Hose Adapter (using BOSL2 with proper module structure):**
 \`\`\`openscad
 include <BOSL2/std.scad>
 
-// Mug parameters
-cup_height = 100;
-cup_outer_radius = 40;
-wall_thickness = 3;
-handle_width = 25;
-handle_thickness = 8;
-handle_offset = 15;
+// Parameters
+small_od = 44;
+large_od = 64;
+wall_thickness = 2;
+small_length = 30;
+large_length = 30;
+transition_length = 20;
+taper_angle = 3;
 
-// Main cup body
-difference() {
-  cyl(h=cup_height, d=cup_outer_radius*2, rounding2=2, anchor=BOTTOM);
-  up(wall_thickness)
-    cyl(h=cup_height, d=(cup_outer_radius-wall_thickness)*2, anchor=BOTTOM);
+// Calculated values
+small_id = small_od - wall_thickness * 2;
+large_id = large_od - wall_thickness * 2;
+total_length = small_length + transition_length + large_length;
+
+// Individual feature modules (REQUIRED for click-to-code mapping)
+module small_cone_outer() {
+  cyl(h=small_length, d1=small_od-tan(taper_angle)*small_length*2, d2=small_od, anchor=BOTTOM, $fn=64);
 }
 
-// Handle
-right(cup_outer_radius - 2)
-  up(cup_height/2 + handle_offset)
-    rotate([90, 0, 90])
-      tube(h=handle_thickness, od=handle_width, id=handle_width-handle_thickness*2);
+module transition_outer() {
+  up(small_length)
+    cyl(h=transition_length, d1=small_od, d2=large_od, anchor=BOTTOM, $fn=64);
+}
+
+module large_cone_outer() {
+  up(small_length + transition_length)
+    cyl(h=large_length, d1=large_od, d2=large_od-tan(taper_angle)*large_length*2, anchor=BOTTOM, $fn=64);
+}
+
+module inner_bore() {
+  cyl(h=total_length+1, d1=small_id, d2=large_id, anchor=BOTTOM, $fn=64);
+}
+
+// Assembly using modules
+difference() {
+  union() {
+    small_cone_outer();
+    transition_outer();
+    large_cone_outer();
+  }
+  inner_bore();
+}
 \`\`\`
 `;
 

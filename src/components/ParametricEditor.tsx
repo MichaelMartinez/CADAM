@@ -15,23 +15,30 @@ import { Button } from '@/components/ui/button';
 import { ChevronsRight } from 'lucide-react';
 import { ViewerSection } from '@/components/viewer/ViewerSection';
 import { ParameterSection } from '@/components/parameter/ParameterSection';
+import { CodePanel } from '@/components/code/CodePanel';
 import { useBlob } from '@/contexts/BlobContext';
 import { useColor } from '@/contexts/ColorContext';
+import { SourceMappingProvider } from '@/contexts/SourceMappingContext';
 
 const PANEL_SIZES = {
   CHAT: {
-    DEFAULT: 30,
+    DEFAULT: 25,
     MIN: 384,
     MAX: 550,
   },
+  CODE: {
+    DEFAULT: 20,
+    MIN: 280,
+    MAX: 400,
+  },
   PREVIEW: {
-    DEFAULT: 45,
+    DEFAULT: 35,
     MIN: 20,
   },
   PARAMETERS: {
-    DEFAULT: 30,
-    MIN: 320,
-    MAX: 384,
+    DEFAULT: 20,
+    MIN: 280,
+    MAX: 350,
   },
 } as const;
 
@@ -43,8 +50,10 @@ export function ParametricEditor() {
   const [isParametersPanelCollapsed, setIsParametersPanelCollapsed] =
     useState(false);
   const [isChatCollapsed, setIsChatCollapsed] = useState(false);
+  const [isCodePanelCollapsed, setIsCodePanelCollapsed] = useState(false);
   const chatPanelRef = useRef<ImperativePanelHandle>(null);
   const parameterPanelRef = useRef<ImperativePanelHandle>(null);
+  const codePanelRef = useRef<ImperativePanelHandle>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [containerWidth, setContainerWidth] = useState(0);
 
@@ -124,14 +133,32 @@ export function ParametricEditor() {
     };
   }, [containerWidth]);
 
+  const codePanelSizes = useMemo(() => {
+    if (containerWidth === 0)
+      return { defaultSize: 20, minSize: 15, maxSize: 25 };
+
+    const minSize = (PANEL_SIZES.CODE.MIN / containerWidth) * 100;
+    const maxSize = (PANEL_SIZES.CODE.MAX / containerWidth) * 100;
+    const defaultSize = Math.min(
+      Math.max(PANEL_SIZES.CODE.DEFAULT, minSize),
+      maxSize,
+    );
+    return {
+      defaultSize,
+      minSize,
+      maxSize,
+    };
+  }, [containerWidth]);
+
   const parametersPanelSizes = useMemo(() => {
     if (containerWidth === 0)
-      return { defaultSize: 25, minSize: 15, maxSize: 30 };
+      return { defaultSize: 20, minSize: 15, maxSize: 25 };
 
     const chatMinPixels = PANEL_SIZES.CHAT.MIN;
+    const codeMinPixels = PANEL_SIZES.CODE.MIN;
     const previewMinPixels = (PANEL_SIZES.PREVIEW.MIN / 100) * containerWidth;
     const availableForParameters =
-      containerWidth - chatMinPixels - previewMinPixels;
+      containerWidth - chatMinPixels - codeMinPixels - previewMinPixels;
 
     const maxPixelsAvailable = Math.min(
       PANEL_SIZES.PARAMETERS.MAX,
@@ -193,119 +220,181 @@ export function ParametricEditor() {
     }
   }, []);
 
+  const handleCodePanelCollapse = useCallback(() => {
+    const panel = codePanelRef.current;
+    if (panel) {
+      panel.collapse();
+      setIsCodePanelCollapsed(true);
+    }
+  }, []);
+
+  const handleCodePanelExpand = useCallback(() => {
+    const panel = codePanelRef.current;
+    if (panel) {
+      panel.expand();
+      setIsCodePanelCollapsed(false);
+    }
+  }, []);
+
   return (
-    <div
-      className="flex h-full w-full overflow-hidden bg-[#292828]"
-      ref={setContainerRef}
-    >
-      <PanelGroup
-        key={hasArtifact ? 'with-params' : 'no-params'}
-        direction="horizontal"
-        className="h-full w-full"
+    <SourceMappingProvider>
+      <div
+        className="flex h-full w-full overflow-hidden bg-[#292828]"
+        ref={setContainerRef}
       >
-        <Panel
-          collapsible
-          ref={chatPanelRef}
-          defaultSize={chatPanelSizes.defaultSize}
-          minSize={chatPanelSizes.minSize}
-          maxSize={chatPanelSizes.maxSize}
-          id="chat-panel"
-          order={0}
+        <PanelGroup
+          key={hasArtifact ? 'with-params' : 'no-params'}
+          direction="horizontal"
+          className="h-full w-full"
         >
-          <div className="relative h-full">
-            <ChatSection messages={currentMessageBranch ?? []} />
-          </div>
-        </Panel>
-        <PanelResizeHandle className="resize-handle group relative">
-          {!isChatCollapsed && (
-            <div className="absolute left-1 top-1/2 z-50 -translate-y-1/2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-              <Button
-                variant="ghost"
-                className="rounded-l-none rounded-r-lg border-b border-r border-t border-gray-200/20 bg-adam-bg-secondary-dark p-2 text-adam-text-primary transition-colors dark:border-gray-800 [@media(hover:hover)]:hover:bg-adam-neutral-950 [@media(hover:hover)]:hover:text-adam-neutral-10"
-                onClick={handleChatCollapse}
-              >
-                <ChevronsRight className="h-5 w-5 rotate-180" />
-              </Button>
+          <Panel
+            collapsible
+            ref={chatPanelRef}
+            defaultSize={chatPanelSizes.defaultSize}
+            minSize={chatPanelSizes.minSize}
+            maxSize={chatPanelSizes.maxSize}
+            id="chat-panel"
+            order={0}
+          >
+            <div className="relative h-full">
+              <ChatSection messages={currentMessageBranch ?? []} />
             </div>
-          )}
-          {isChatCollapsed && (
-            <div className="absolute left-0 top-1/2 z-50 -translate-y-1/2">
-              <Button
-                aria-label="Expand chat panel"
-                onClick={handleChatExpand}
-                className="flex h-[100px] w-9 flex-col items-center rounded-l-none rounded-r-lg bg-adam-bg-secondary-dark px-1.5 py-2 text-adam-text-primary"
-              >
-                <ChevronsRight className="h-5 w-5 text-white" />
-                <div className="flex flex-1 items-center justify-center">
-                  <span className="rotate-90 transform text-center text-base font-semibold text-white">
-                    Chat
-                  </span>
-                </div>
-              </Button>
-            </div>
-          )}
-        </PanelResizeHandle>
-        <Panel
-          defaultSize={
-            PANEL_SIZES.PREVIEW.DEFAULT +
-            (hasArtifact ? 0 : parametersPanelSizes.defaultSize)
-          }
-          minSize={
-            PANEL_SIZES.PREVIEW.MIN +
-            (hasArtifact ? 0 : parametersPanelSizes.minSize)
-          }
-          id="preview-panel"
-          order={1}
-        >
-          <ViewerSection />
-        </Panel>
-        {hasArtifact && (
-          <>
-            <PanelResizeHandle className="resize-handle group relative">
-              {!isParametersPanelCollapsed && (
-                <div className="absolute right-1 top-1/2 z-50 -translate-y-1/2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
-                  <Button
-                    variant="ghost"
-                    className="rounded-l-lg rounded-r-none border-b border-l border-t border-gray-200/20 bg-adam-bg-secondary-dark p-2 text-adam-text-primary transition-colors dark:border-gray-800 [@media(hover:hover)]:hover:bg-adam-neutral-950 [@media(hover:hover)]:hover:text-adam-neutral-10"
-                    onClick={handleParametersCollapse}
-                  >
-                    <ChevronsRight className="h-5 w-5" />
-                  </Button>
-                </div>
-              )}
-              {isParametersPanelCollapsed && (
-                <div className="absolute right-0 top-1/2 z-50 -translate-y-1/2">
-                  <Button
-                    aria-label="Expand parameters panel"
-                    onClick={handleParametersExpand}
-                    className="flex h-[140px] w-9 flex-col items-center rounded-l-lg rounded-r-none bg-adam-bg-secondary-dark p-2 px-1.5 py-2 text-adam-text-primary"
-                  >
-                    <ChevronsRight className="mb-3 h-5 w-5 rotate-180 text-white" />
-                    <div className="flex flex-1 items-center justify-center">
-                      <span className="min-w-[100px] -rotate-90 transform text-center text-base font-semibold text-white">
-                        Parameters
-                      </span>
-                    </div>
-                  </Button>
-                </div>
-              )}
-            </PanelResizeHandle>
-            <Panel
-              collapsible
-              ref={parameterPanelRef}
-              defaultSize={parametersPanelSizes.defaultSize}
-              minSize={parametersPanelSizes.minSize}
-              maxSize={parametersPanelSizes.maxSize}
-              id="parameters-panel"
-              order={2}
-            >
-              <div className="relative h-full">
-                <ParameterSection />
+          </Panel>
+          <PanelResizeHandle className="resize-handle group relative">
+            {!isChatCollapsed && (
+              <div className="absolute left-1 top-1/2 z-50 -translate-y-1/2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                <Button
+                  variant="ghost"
+                  className="rounded-l-none rounded-r-lg border-b border-r border-t border-gray-200/20 bg-adam-bg-secondary-dark p-2 text-adam-text-primary transition-colors dark:border-gray-800 [@media(hover:hover)]:hover:bg-adam-neutral-950 [@media(hover:hover)]:hover:text-adam-neutral-10"
+                  onClick={handleChatCollapse}
+                >
+                  <ChevronsRight className="h-5 w-5 rotate-180" />
+                </Button>
               </div>
-            </Panel>
-          </>
-        )}
-      </PanelGroup>
-    </div>
+            )}
+            {isChatCollapsed && (
+              <div className="absolute left-0 top-1/2 z-50 -translate-y-1/2">
+                <Button
+                  aria-label="Expand chat panel"
+                  onClick={handleChatExpand}
+                  className="flex h-[100px] w-9 flex-col items-center rounded-l-none rounded-r-lg bg-adam-bg-secondary-dark px-1.5 py-2 text-adam-text-primary"
+                >
+                  <ChevronsRight className="h-5 w-5 text-white" />
+                  <div className="flex flex-1 items-center justify-center">
+                    <span className="rotate-90 transform text-center text-base font-semibold text-white">
+                      Chat
+                    </span>
+                  </div>
+                </Button>
+              </div>
+            )}
+          </PanelResizeHandle>
+          {/* Code Panel - only show when artifact exists */}
+          {hasArtifact && (
+            <>
+              <Panel
+                collapsible
+                ref={codePanelRef}
+                defaultSize={codePanelSizes.defaultSize}
+                minSize={codePanelSizes.minSize}
+                maxSize={codePanelSizes.maxSize}
+                id="code-panel"
+                order={1}
+              >
+                <CodePanel />
+              </Panel>
+              <PanelResizeHandle className="resize-handle group relative">
+                {!isCodePanelCollapsed && (
+                  <div className="absolute left-1 top-1/2 z-50 -translate-y-1/2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                    <Button
+                      variant="ghost"
+                      className="rounded-l-none rounded-r-lg border-b border-r border-t border-gray-200/20 bg-adam-bg-secondary-dark p-2 text-adam-text-primary transition-colors dark:border-gray-800 [@media(hover:hover)]:hover:bg-adam-neutral-950 [@media(hover:hover)]:hover:text-adam-neutral-10"
+                      onClick={handleCodePanelCollapse}
+                    >
+                      <ChevronsRight className="h-5 w-5 rotate-180" />
+                    </Button>
+                  </div>
+                )}
+                {isCodePanelCollapsed && (
+                  <div className="absolute left-0 top-1/2 z-50 -translate-y-1/2">
+                    <Button
+                      aria-label="Expand code panel"
+                      onClick={handleCodePanelExpand}
+                      className="flex h-[100px] w-9 flex-col items-center rounded-l-none rounded-r-lg bg-adam-bg-secondary-dark px-1.5 py-2 text-adam-text-primary"
+                    >
+                      <ChevronsRight className="h-5 w-5 text-white" />
+                      <div className="flex flex-1 items-center justify-center">
+                        <span className="rotate-90 transform text-center text-base font-semibold text-white">
+                          Code
+                        </span>
+                      </div>
+                    </Button>
+                  </div>
+                )}
+              </PanelResizeHandle>
+            </>
+          )}
+          <Panel
+            defaultSize={
+              PANEL_SIZES.PREVIEW.DEFAULT +
+              (hasArtifact
+                ? 0
+                : parametersPanelSizes.defaultSize + codePanelSizes.defaultSize)
+            }
+            minSize={PANEL_SIZES.PREVIEW.MIN}
+            id="preview-panel"
+            order={2}
+          >
+            <ViewerSection />
+          </Panel>
+          {hasArtifact && (
+            <>
+              <PanelResizeHandle className="resize-handle group relative">
+                {!isParametersPanelCollapsed && (
+                  <div className="absolute right-1 top-1/2 z-50 -translate-y-1/2 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                    <Button
+                      variant="ghost"
+                      className="rounded-l-lg rounded-r-none border-b border-l border-t border-gray-200/20 bg-adam-bg-secondary-dark p-2 text-adam-text-primary transition-colors dark:border-gray-800 [@media(hover:hover)]:hover:bg-adam-neutral-950 [@media(hover:hover)]:hover:text-adam-neutral-10"
+                      onClick={handleParametersCollapse}
+                    >
+                      <ChevronsRight className="h-5 w-5" />
+                    </Button>
+                  </div>
+                )}
+                {isParametersPanelCollapsed && (
+                  <div className="absolute right-0 top-1/2 z-50 -translate-y-1/2">
+                    <Button
+                      aria-label="Expand parameters panel"
+                      onClick={handleParametersExpand}
+                      className="flex h-[140px] w-9 flex-col items-center rounded-l-lg rounded-r-none bg-adam-bg-secondary-dark p-2 px-1.5 py-2 text-adam-text-primary"
+                    >
+                      <ChevronsRight className="mb-3 h-5 w-5 rotate-180 text-white" />
+                      <div className="flex flex-1 items-center justify-center">
+                        <span className="min-w-[100px] -rotate-90 transform text-center text-base font-semibold text-white">
+                          Parameters
+                        </span>
+                      </div>
+                    </Button>
+                  </div>
+                )}
+              </PanelResizeHandle>
+              <Panel
+                collapsible
+                ref={parameterPanelRef}
+                defaultSize={parametersPanelSizes.defaultSize}
+                minSize={parametersPanelSizes.minSize}
+                maxSize={parametersPanelSizes.maxSize}
+                id="parameters-panel"
+                order={3}
+              >
+                <div className="relative h-full">
+                  <ParameterSection />
+                </div>
+              </Panel>
+            </>
+          )}
+        </PanelGroup>
+      </div>
+    </SourceMappingProvider>
   );
 }
