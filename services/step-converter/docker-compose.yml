@@ -1,0 +1,37 @@
+services:
+  step-converter:
+    image: step-converter:latest
+    container_name: step-converter
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - '8080:8080'
+    environment:
+      # API authentication secret (leave empty to disable auth for dev)
+      - STEP_CONVERTER_API_SECRET=${STEP_CONVERTER_API_SECRET:-}
+      # Job expiry time in seconds (default 5 minutes)
+      - JOB_TTL_SECONDS=${JOB_TTL_SECONDS:-300}
+      # Max OpenSCAD code size in KB
+      - MAX_CODE_SIZE_KB=${MAX_CODE_SIZE_KB:-500}
+      # Max concurrent conversion jobs
+      - MAX_CONCURRENT_JOBS=${MAX_CONCURRENT_JOBS:-10}
+    networks:
+      - default
+      - supabase_network_cadam
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2'
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8080/health']
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+networks:
+  supabase_network_cadam:
+    external: true

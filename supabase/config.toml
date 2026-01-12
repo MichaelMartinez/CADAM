@@ -44,3 +44,11 @@ verify_jwt = true
 [functions.prompt-generator]
 enabled = true
 verify_jwt = true
+
+[functions.step-converter]
+enabled = true
+verify_jwt = true
+
+[api]
+enabled = true
+port = 54321

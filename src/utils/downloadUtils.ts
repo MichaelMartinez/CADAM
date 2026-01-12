@@ -94,3 +94,22 @@ export function downloadOpenSCADFile(
     mimeType: 'text/plain',
   });
 }
+
+/**
+ * Downloads STEP file from blob
+ */
+export function downloadSTEPFile(
+  output: Blob,
+  currentMessage?: Message | null,
+): void {
+  const filename = generateDownloadFilename({
+    currentMessage,
+    extension: 'step',
+  });
+
+  downloadFile({
+    content: output,
+    filename,
+    mimeType: 'application/step',
+  });
+}

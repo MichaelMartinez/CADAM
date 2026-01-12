@@ -1,4 +1,4 @@
-import { RefreshCcw, Download, ChevronUp } from 'lucide-react';
+import { RefreshCcw, Download, ChevronUp, Loader2 } from 'lucide-react';
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -22,13 +22,17 @@ import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import { downloadSTLFile, downloadOpenSCADFile } from '@/utils/downloadUtils';
 import { useChangeParameters } from '@/services/messageService';
 import { useBlob } from '@/contexts/BlobContext';
+import { useStepExport } from '@/hooks/useStepExport';
 
 export function ParameterSection() {
   const { blob } = useBlob();
   const changeParameters = useChangeParameters();
   const { currentMessage } = useCurrentMessage();
   const parameters = currentMessage?.content.artifact?.parameters ?? [];
-  const [selectedFormat, setSelectedFormat] = useState<'stl' | 'scad'>('stl');
+  const [selectedFormat, setSelectedFormat] = useState<'stl' | 'scad' | 'step'>(
+    'stl',
+  );
+  const { exportToStep, isExporting, progress } = useStepExport();
 
   // Debounce timer for compilation
   const debounceTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -79,8 +83,10 @@ export function ParameterSection() {
   const handleDownload = () => {
     if (selectedFormat === 'stl') {
       handleDownloadSTL();
-    } else {
+    } else if (selectedFormat === 'scad') {
       handleDownloadOpenSCAD();
+    } else if (selectedFormat === 'step') {
+      handleDownloadSTEP();
     }
   };
 
@@ -94,8 +100,19 @@ export function ParameterSection() {
     downloadOpenSCADFile(currentMessage.content.artifact.code, currentMessage);
   };
 
+  const handleDownloadSTEP = () => {
+    const code = currentMessage?.content.artifact?.code;
+    if (!code) return;
+    exportToStep(code, currentMessage);
+  };
+
   const isDownloadDisabled =
-    selectedFormat === 'stl' ? !blob : !currentMessage?.content.artifact?.code;
+    isExporting ||
+    (selectedFormat === 'stl'
+      ? !blob
+      : selectedFormat === 'step'
+        ? !currentMessage?.content.artifact?.code
+        : !currentMessage?.content.artifact?.code);
 
   return (
     <div className="h-full w-full max-w-full border-l border-gray-200/20 bg-adam-bg-secondary-dark dark:border-gray-800">
@@ -152,8 +169,17 @@ export function ParameterSection() {
               aria-label={`download ${selectedFormat.toUpperCase()} file`}
               className="h-12 flex-1 rounded-r-none bg-adam-neutral-50 text-adam-neutral-800 hover:bg-adam-neutral-100 hover:text-adam-neutral-900"
             >
-              <Download className="mr-2 h-4 w-4" />
-              {selectedFormat.toUpperCase()}
+              {isExporting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {progress || 'Converting...'}
+                </>
+              ) : (
+                <>
+                  <Download className="mr-2 h-4 w-4" />
+                  {selectedFormat.toUpperCase()}
+                </>
+              )}
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -187,6 +213,16 @@ export function ParameterSection() {
                   <span className="text-sm">.SCAD</span>
                   <span className="ml-3 text-xs text-adam-text-primary/60">
                     OpenSCAD Code
+                  </span>
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setSelectedFormat('step')}
+                  disabled={!currentMessage?.content.artifact?.code}
+                  className="cursor-pointer text-adam-text-primary"
+                >
+                  <span className="text-sm">.STEP</span>
+                  <span className="ml-3 text-xs text-adam-text-primary/60">
+                    CAD Exchange
                   </span>
                 </DropdownMenuItem>
               </DropdownMenuContent>
