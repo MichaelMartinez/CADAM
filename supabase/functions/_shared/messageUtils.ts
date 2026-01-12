@@ -139,9 +139,24 @@ export async function formatUserMessage(
     );
 
     if (base64Images.length > 0) {
+      // Provide detailed guidance for image interpretation
+      const imageCount = base64Images.length;
+      const imageInstruction = `**VISUAL REFERENCE${imageCount > 1 ? 'S' : ''} PROVIDED** (${imageCount} image${imageCount > 1 ? 's' : ''})
+
+Analyze ${imageCount > 1 ? 'these images' : 'this image'} carefully to create the 3D model:
+
+1. **Identify the object type**: What is this? (bracket, enclosure, adapter, organizer, etc.)
+2. **Extract geometry**: Break down into primitives (boxes, cylinders, extrusions)
+3. **Estimate dimensions**: Use proportions and context clues for sizing
+4. **Note all features**: Holes, slots, fillets, patterns, mounting points
+5. **Infer hidden geometry**: What's behind/inside based on the visible portion?
+
+Generate parametric OpenSCAD code that faithfully reproduces this design with adjustable parameters.
+Include comments linking each module to the corresponding feature in the image.`;
+
       parts.push({
         type: 'text',
-        text: `Reference images (IDs: ${message.content.images.join(', ')}):`,
+        text: imageInstruction,
       });
       parts.push(
         ...base64Images.map((image) => ({
@@ -160,7 +175,7 @@ export async function formatUserMessage(
     } else {
       parts.push({
         type: 'text',
-        text: `User uploaded ${message.content.images.length} reference image(s) with IDs: ${message.content.images.join(', ')}`,
+        text: `User uploaded ${message.content.images.length} reference image(s) with IDs: ${message.content.images.join(', ')}. Analyze based on the user's text description.`,
       });
     }
   }
