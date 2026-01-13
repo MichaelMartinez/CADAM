@@ -10,6 +10,121 @@ import subprocess
 from typing import Tuple, Optional
 
 
+def validate_scad_code(code: str) -> Optional[str]:
+    """
+    Basic validation of OpenSCAD code.
+
+    Returns None if valid, or an error message if invalid.
+    """
+    if not code or not code.strip():
+        return "Empty OpenSCAD code"
+
+    # Check for basic syntax issues
+    code_stripped = code.strip()
+
+    # Must contain at least one shape-creating function or module
+    # Includes standard OpenSCAD and common BOSL2 functions
+    shape_keywords = [
+        # Standard OpenSCAD primitives
+        'cube', 'sphere', 'cylinder', 'polyhedron',
+        'circle', 'square', 'polygon', 'text',
+        'linear_extrude', 'rotate_extrude',
+        'import', 'surface',
+        'union', 'difference', 'intersection',
+        'hull', 'minkowski',
+        # BOSL2 primitives and shapes
+        'cuboid', 'cyl', 'xcyl', 'ycyl', 'zcyl',
+        'tube', 'torus', 'spheroid', 'onion',
+        'prismoid', 'rounded_prism', 'rect_tube',
+        'wedge', 'pie_slice', 'teardrop',
+        'path_sweep', 'skin', 'vnf_polyhedron',
+        # BOSL2 includes (indicates BOSL2 usage)
+        'bosl2', 'std.scad'
+    ]
+
+    has_shape = any(keyword in code_stripped.lower() for keyword in shape_keywords)
+    if not has_shape:
+        return "Code does not contain any recognizable OpenSCAD shape operations"
+
+    return None
+
+
+def validate_is_3d_object(scad_code: str) -> Optional[str]:
+    """
+    Pre-validate that the OpenSCAD code produces a 3D object, not 2D.
+
+    Runs OpenSCAD to attempt STL export - if it fails with "Top level object is a 2D object",
+    we can provide a clear error message instead of letting FreeCAD fail cryptically.
+
+    Returns None if valid 3D, or an error message if 2D or invalid.
+    """
+    temp_dir = tempfile.mkdtemp(prefix="scad_validate_")
+    scad_path = os.path.join(temp_dir, "input.scad")
+    stl_path = os.path.join(temp_dir, "output.stl")
+
+    try:
+        # Write OpenSCAD code to temp file
+        with open(scad_path, 'w', encoding='utf-8') as f:
+            f.write(scad_code)
+
+        # Try to export to STL - this will fail for 2D objects
+        result = subprocess.run(
+            ['openscad', '-o', stl_path, scad_path],
+            capture_output=True,
+            text=True,
+            timeout=120,  # 2 minute timeout for validation
+            cwd=temp_dir
+        )
+
+        # Check stderr for 2D object warning
+        if "Top level object is a 2D object" in result.stderr:
+            return (
+                "The model is a 2D object and cannot be exported to STEP format. "
+                "STEP files require 3D geometry. Try adding linear_extrude() or "
+                "rotate_extrude() to convert 2D shapes to 3D."
+            )
+
+        # Check for other OpenSCAD errors
+        if result.returncode != 0:
+            # Extract meaningful error from stderr
+            stderr = result.stderr.strip()
+            # Look for actual errors (not warnings)
+            error_lines = [
+                line for line in stderr.split('\n')
+                if 'ERROR' in line or 'error' in line.lower()
+            ]
+            if error_lines:
+                return f"OpenSCAD error: {error_lines[0]}"
+            # If STL wasn't created, there's an issue
+            if not os.path.exists(stl_path):
+                return f"OpenSCAD failed to generate geometry: {stderr[:500]}"
+
+        # Verify STL was created and has content
+        if not os.path.exists(stl_path):
+            return "OpenSCAD produced no output - model may be empty or invalid"
+
+        stl_size = os.path.getsize(stl_path)
+        if stl_size < 100:  # Minimal valid STL is larger than this
+            return "OpenSCAD produced empty or invalid geometry"
+
+        return None  # Valid 3D object
+
+    except subprocess.TimeoutExpired:
+        return "OpenSCAD validation timed out"
+    except FileNotFoundError:
+        # OpenSCAD not available for pre-validation, skip this check
+        return None
+    except Exception as e:
+        # Don't block conversion on validation errors
+        print(f"Warning: Pre-validation failed: {e}", file=sys.stderr)
+        return None
+    finally:
+        try:
+            shutil.rmtree(temp_dir)
+        except Exception:
+            pass
+
+
 def convert_scad_to_step(
     scad_code: str,
     refine_shape: bool = True
@@ -18,9 +133,10 @@ def convert_scad_to_step(
     Convert OpenSCAD code to STEP format using FreeCAD.
 
     This function:
-    1. Writes the .scad code to a temp file
-    2. Uses FreeCAD's Python API to import and export
-    3. Returns the STEP file content
+    1. Pre-validates that the code produces 3D geometry
+    2. Writes the .scad code to a temp file
+    3. Uses FreeCAD's Python API to import and export
+    4. Returns the STEP file content
 
     Args:
         scad_code: OpenSCAD source code string
@@ -30,6 +146,11 @@ def convert_scad_to_step(
         Tuple of (step_bytes, error_message)
         If successful, error_message is None
     """
+    # Pre-validate that the code produces 3D geometry
+    validation_error = validate_is_3d_object(scad_code)
+    if validation_error:
+        return b'', validation_error
+
     temp_dir = tempfile.mkdtemp(prefix="scad_convert_")
     scad_path = os.path.join(temp_dir, "input.scad")
     step_path = os.path.join(temp_dir, "output.step")
@@ -153,8 +274,58 @@ finally:
         )
 
         if result.returncode != 0:
-            error_msg = result.stderr.strip() or result.stdout.strip() or "Unknown FreeCAD error"
-            return b'', f"FreeCAD conversion failed: {error_msg}"
+            stderr = result.stderr.strip()
+            stdout = result.stdout.strip()
+            combined = stderr + stdout
+
+            # Check for 2D object error from FreeCAD's OpenSCAD processing
+            if "Top level object is a 2D object" in combined:
+                return b'', (
+                    "The model is a 2D object and cannot be exported to STEP format. "
+                    "STEP files require 3D geometry. Try adding linear_extrude() or "
+                    "rotate_extrude() to convert 2D shapes to 3D."
+                )
+
+            # Check for OpenSCAD syntax/semantic errors
+            if "ERROR:" in combined:
+                # Extract the first ERROR line
+                for line in combined.split('\n'):
+                    if 'ERROR:' in line:
+                        return b'', f"OpenSCAD error: {line.strip()}"
+
+            # Check for missing geometry
+            if "No valid shapes found" in combined:
+                return b'', "No valid 3D geometry was produced. Check your OpenSCAD code for errors."
+
+            # Fallback: provide a cleaner error message
+            # Extract first meaningful error line (skip warnings and cache info)
+            error_lines = []
+            for line in combined.split('\n'):
+                line = line.strip()
+                if not line:
+                    continue
+                # Skip noise lines
+                if any(skip in line for skip in [
+                    'Geometries in cache',
+                    'Geometry cache size',
+                    'CGAL Polyhedrons',
+                    'CGAL cache size',
+                    'Total rendering time',
+                    'Token',
+                    'unused tokens',
+                    'DXF libraries',
+                ]):
+                    continue
+                error_lines.append(line)
+
+            if error_lines:
+                # Return first few meaningful lines
+                error_msg = ' '.join(error_lines[:3])
+                if len(error_msg) > 300:
+                    error_msg = error_msg[:300] + '...'
+                return b'', f"Conversion failed: {error_msg}"
+
+            return b'', "FreeCAD conversion failed with unknown error"
 
         if "SUCCESS" not in result.stdout:
             return b'', f"FreeCAD conversion failed: {result.stderr or result.stdout}"
@@ -185,45 +356,6 @@ finally:
             shutil.rmtree(temp_dir)
         except Exception:
             pass
-
-
-def validate_scad_code(code: str) -> Optional[str]:
-    """
-    Basic validation of OpenSCAD code.
-
-    Returns None if valid, or an error message if invalid.
-    """
-    if not code or not code.strip():
-        return "Empty OpenSCAD code"
-
-    # Check for basic syntax issues
-    code_stripped = code.strip()
-
-    # Must contain at least one shape-creating function or module
-    # Includes standard OpenSCAD and common BOSL2 functions
-    shape_keywords = [
-        # Standard OpenSCAD primitives
-        'cube', 'sphere', 'cylinder', 'polyhedron',
-        'circle', 'square', 'polygon', 'text',
-        'linear_extrude', 'rotate_extrude',
-        'import', 'surface',
-        'union', 'difference', 'intersection',
-        'hull', 'minkowski',
-        # BOSL2 primitives and shapes
-        'cuboid', 'cyl', 'xcyl', 'ycyl', 'zcyl',
-        'tube', 'torus', 'spheroid', 'onion',
-        'prismoid', 'rounded_prism', 'rect_tube',
-        'wedge', 'pie_slice', 'teardrop',
-        'path_sweep', 'skin', 'vnf_polyhedron',
-        # BOSL2 includes (indicates BOSL2 usage)
-        'bosl2', 'std.scad'
-    ]
-
-    has_shape = any(keyword in code_stripped.lower() for keyword in shape_keywords)
-    if not has_shape:
-        return "Code does not contain any recognizable OpenSCAD shape operations"
-
-    return None
 
 
 if __name__ == "__main__":
