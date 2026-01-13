@@ -139,20 +139,26 @@ export async function formatUserMessage(
     );
 
     if (base64Images.length > 0) {
-      // Provide detailed guidance for image interpretation
       const imageCount = base64Images.length;
-      const imageInstruction = `**VISUAL REFERENCE${imageCount > 1 ? 'S' : ''} PROVIDED** (${imageCount} image${imageCount > 1 ? 's' : ''})
+      const imageInstruction = `**IMAGE REFERENCE** (${imageCount} image${imageCount > 1 ? 's' : ''})
 
-Analyze ${imageCount > 1 ? 'these images' : 'this image'} carefully to create the 3D model:
+Analyze carefully and generate OpenSCAD code:
 
-1. **Identify the object type**: What is this? (bracket, enclosure, adapter, organizer, etc.)
-2. **Extract geometry**: Break down into primitives (boxes, cylinders, extrusions)
-3. **Estimate dimensions**: Use proportions and context clues for sizing
-4. **Note all features**: Holes, slots, fillets, patterns, mounting points
-5. **Infer hidden geometry**: What's behind/inside based on the visible portion?
+FOR TECHNICAL DRAWINGS:
+- Extract dimensions from EACH view (side=length/height, front=width/height)
+- If multiple parts shown in rows, each row has DIFFERENT dimensions
+- Watch for thin features (<5mm) - do NOT apply large rounding values
 
-Generate parametric OpenSCAD code that faithfully reproduces this design with adjustable parameters.
-Include comments linking each module to the corresponding feature in the image.`;
+FOR SKETCHES/PHOTOS:
+- Estimate dimensions based on object type and proportions
+- Identify primitives: cuboid, cyl, prismoid
+- Note holes, slots, mounting features
+
+REQUIREMENTS:
+- Create named module for each feature
+- Parameters at top of file
+- Comments linking modules to image features
+- Remember: rounding must be < (smallest_dimension / 2)`;
 
       parts.push({
         type: 'text',

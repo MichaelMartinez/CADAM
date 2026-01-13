@@ -90,6 +90,10 @@ function scoreOpenSCADCode(code: string): number {
     /\bimport\s*\(\s*"/gi, // Import statements
     /;\s*$/gm, // Semicolon line endings (common in OpenSCAD)
     /\/\/.*$/gm, // Single-line comments
+    /include\s*<BOSL2\/std\.scad>/gi, // BOSL2 include (strong signal)
+    /\b(cuboid|cyl|prismoid)\s*\(/gi, // BOSL2 primitives
+    /\b(attach|anchor|orient)\s*[=(]/gi, // BOSL2 attachment system
+    /\b(xcopies|ycopies|zcopies|grid_copies)\s*\(/gi, // BOSL2 distributions
   ];
 
   for (const pattern of patterns) {
@@ -804,10 +808,10 @@ Deno.serve(async (req) => {
               console.error('Code generation failed:', codeResult.reason);
             }
 
-            const codeBlockRegex = /^```(?:openscad)?\n?([\s\S]*?)\n?```$/;
-            const match = code.match(codeBlockRegex);
-            if (match) {
-              code = match[1].trim();
+            // Extract OpenSCAD code from response (handles markdown, text before/after, etc.)
+            const extractedCode = extractOpenSCADCodeFromText(code);
+            if (extractedCode) {
+              code = extractedCode;
             }
 
             let title =
