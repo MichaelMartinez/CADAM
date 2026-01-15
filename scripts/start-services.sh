@@ -195,9 +195,9 @@ show_status() {
     echo ""
 
     # Vite
-    if check_port 5173; then
+    if check_port 3000; then
         print_success "Vite Dev Server: Running"
-        echo "         URL: http://localhost:5173"
+        echo "         URL: http://localhost:3000"
     else
         print_warning "Vite Dev Server: Not running"
     fi
@@ -318,7 +318,7 @@ start_all() {
     fi
 
     # Ask about Vite
-    if ! check_port 5173; then
+    if ! check_port 3000; then
         read -p "Start Vite dev server? (y/N): " start_vite_answer
         if [[ "$start_vite_answer" =~ ^[Yy]$ ]]; then
             start_vite
