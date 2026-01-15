@@ -64,6 +64,8 @@ Deno.serve(async (req) => {
   const action = pathParts[1]; // 'convert', 'status', or 'download'
   const jobId = pathParts[2];
 
+  const isGodMode = Deno.env.get('GOD_MODE') === 'true';
+
   // Authenticate user via Supabase
   const supabaseClient = getAnonSupabaseClient({
     global: {
@@ -71,14 +73,17 @@ Deno.serve(async (req) => {
     },
   });
 
-  const { data: userData, error: userError } =
-    await supabaseClient.auth.getUser();
+  // In god mode, skip auth check
+  if (!isGodMode) {
+    const { data: userData, error: userError } =
+      await supabaseClient.auth.getUser();
 
-  if (!userData.user || userError) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
-      status: 401,
-      headers: { ...extendedCorsHeaders, 'Content-Type': 'application/json' },
-    });
+    if (!userData.user || userError) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { ...extendedCorsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
   }
 
   try {

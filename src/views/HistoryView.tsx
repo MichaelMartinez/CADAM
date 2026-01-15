@@ -5,7 +5,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
-import { supabase } from '@/lib/supabase';
+import { supabase, isGodMode } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { format } from 'date-fns';
 import { useToast } from '@/hooks/use-toast';
@@ -37,18 +37,23 @@ export function HistoryView() {
 
   const conversationQuery = useQuery<HistoryConversation[]>({
     queryKey: ['conversations'],
-    enabled: !!user,
+    enabled: !!user || isGodMode,
     queryFn: async () => {
-      const { data: conversationsData, error: conversationsError } =
-        await supabase
-          .from('conversations')
-          .select(
-            `*, first_message:messages(content), messagesCount:messages(count)`,
-          )
-          .eq('user_id', user?.id ?? '')
-          .order('updated_at', { ascending: false })
-          .order('created_at', { ascending: false })
-          .limit(1, { referencedTable: 'first_message' });
+      let query = supabase
+        .from('conversations')
+        .select(
+          `*, first_message:messages(content), messagesCount:messages(count)`,
+        );
+
+      // In god mode, don't filter by user_id - show all conversations
+      if (!isGodMode) {
+        query = query.eq('user_id', user?.id ?? '');
+      }
+
+      const { data: conversationsData, error: conversationsError } = await query
+        .order('updated_at', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(1, { referencedTable: 'first_message' });
 
       if (conversationsError) throw conversationsError;
 

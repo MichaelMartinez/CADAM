@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Session, User } from '@supabase/supabase-js';
-import { supabase } from '@/lib/supabase';
+import { supabase, isGodMode } from '@/lib/supabase';
 import { AuthContext } from './AuthContext';
 
 // Redirect back to current page after OAuth
@@ -54,6 +54,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Initialize auth state and set up session listener
   useEffect(() => {
     const initializeAuth = async () => {
+      // In god mode, skip auth and create mock god user
+      if (isGodMode) {
+        const godUser = {
+          id: 'god-mode-user',
+          email: 'god@local.dev',
+          app_metadata: {},
+          user_metadata: { full_name: 'God Mode' },
+          aud: 'authenticated',
+          created_at: new Date().toISOString(),
+          is_anonymous: false,
+        } as User;
+        setUser(godUser);
+        setSession({ user: godUser } as Session);
+        setIsLoading(false);
+        console.log(
+          '%c🔓 GOD MODE ENABLED - All data accessible without authentication',
+          'background: #ff6b6b; color: white; padding: 4px 8px; border-radius: 4px; font-weight: bold;',
+        );
+        return;
+      }
+
       try {
         let session = null;
         const {
@@ -76,6 +97,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     initializeAuth();
+
+    // Skip auth state listener in god mode
+    if (isGodMode) return;
 
     const {
       data: { subscription },

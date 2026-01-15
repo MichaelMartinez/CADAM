@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/input-otp';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from '@/hooks/use-toast';
+import { isGodMode } from '@/lib/supabase';
 
 type ViewState = 'prompt' | 'emailSent';
 
@@ -21,9 +22,9 @@ export function FloatingAuthModal() {
   const [isLoading, setIsLoading] = useState(false);
   const [isDismissed, setIsDismissed] = useState(false);
 
-  // Don't show if user is authenticated (not anonymous) or if dismissed
+  // Don't show if user is authenticated (not anonymous), dismissed, or in god mode
   const isAuthenticated = user && !user.is_anonymous;
-  if (isAuthenticated || isDismissed) return null;
+  if (isGodMode || isAuthenticated || isDismissed) return null;
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

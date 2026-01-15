@@ -61,39 +61,48 @@ Deno.serve(async (req) => {
     conversationId,
   }: { content: Content; conversationId: string } = await req.json();
 
+  const isGodMode = Deno.env.get('GOD_MODE') === 'true';
+
   const supabaseClient = getAnonSupabaseClient({
     global: {
       headers: { Authorization: req.headers.get('Authorization') ?? '' },
     },
   });
 
-  const { data: userData, error: userError } =
-    await supabaseClient.auth.getUser();
+  let userId = 'god-mode-user';
 
-  if (!userData.user) {
-    return new Response(
-      JSON.stringify({ error: { message: 'Unauthorized' } }),
-      {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      },
-    );
-  }
+  // In god mode, skip auth check
+  if (!isGodMode) {
+    const { data: userData, error: userError } =
+      await supabaseClient.auth.getUser();
 
-  if (userError) {
-    return new Response(
-      JSON.stringify({ error: { message: userError.message } }),
-      {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      },
-    );
+    if (!userData.user) {
+      return new Response(
+        JSON.stringify({ error: { message: 'Unauthorized' } }),
+        {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        },
+      );
+    }
+
+    if (userError) {
+      return new Response(
+        JSON.stringify({ error: { message: userError.message } }),
+        {
+          status: 401,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        },
+      );
+    }
+
+    userId = userData.user.id;
   }
 
   const userMessage = await formatCreativeUserMessage(
     { id: '1', role: 'user', content: content },
     supabaseClient,
-    userData.user.id,
+    userId,
     conversationId,
   );
 

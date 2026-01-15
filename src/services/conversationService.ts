@@ -1,6 +1,6 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { Conversation, Content } from '@shared/types';
-import { supabase } from '@/lib/supabase';
+import { supabase, isGodMode } from '@/lib/supabase';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useParams } from 'react-router-dom';
 
@@ -27,17 +27,21 @@ export function useConversation() {
         if (!conversationId) {
           throw new Error('Conversation ID is required');
         }
-        if (!user?.id) {
+        if (!isGodMode && !user?.id) {
           throw new Error('User must be authenticated');
         }
 
-        const { data, error } = await supabase
+        let query = supabase
           .from('conversations')
           .select('*')
-          .eq('id', conversationId)
-          .eq('user_id', user.id)
-          .limit(1)
-          .single();
+          .eq('id', conversationId);
+
+        // In god mode, don't filter by user_id
+        if (!isGodMode) {
+          query = query.eq('user_id', user!.id);
+        }
+
+        const { data, error } = await query.limit(1).single();
 
         if (error) {
           throw error;

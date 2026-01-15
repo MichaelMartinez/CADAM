@@ -7,7 +7,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { useAuth } from '@/contexts/AuthContext';
-import { supabase } from '@/lib/supabase';
+import { supabase, isGodMode } from '@/lib/supabase';
 import { useQuery } from '@tanstack/react-query';
 import { ConditionalWrapper } from './ConditionalWrapper';
 import { Conversation } from '@shared/types';
@@ -25,12 +25,17 @@ export function Sidebar({ isSidebarOpen }: SidebarProps) {
     queryKey: ['conversations', 'recent'],
     initialData: [],
     queryFn: async () => {
-      const { data: conversations, error } = await supabase
+      let query = supabase
         .from('conversations')
         .select('*')
-        .order('updated_at', { ascending: false })
-        .eq('user_id', user?.id ?? '')
-        .limit(10);
+        .order('updated_at', { ascending: false });
+
+      // In god mode, don't filter by user_id - show all conversations
+      if (!isGodMode) {
+        query = query.eq('user_id', user?.id ?? '');
+      }
+
+      const { data: conversations, error } = await query.limit(10);
 
       if (error) throw error;
 

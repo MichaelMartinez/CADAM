@@ -9,6 +9,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 STEP_CONVERTER_DIR="$PROJECT_ROOT/services/step-converter"
 
+# God mode flag - bypasses all authentication
+GOD_MODE=false
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -77,8 +80,12 @@ start_supabase() {
 start_supabase_functions() {
     print_status "Starting Supabase Edge Functions..."
     cd "$PROJECT_ROOT"
-    # Run in background
-    nohup supabase functions serve --no-verify-jwt > /tmp/supabase-functions.log 2>&1 &
+    # Run in background, pass GOD_MODE env var if enabled
+    if [ "$GOD_MODE" = true ]; then
+        GOD_MODE=true nohup supabase functions serve --no-verify-jwt > /tmp/supabase-functions.log 2>&1 &
+    else
+        nohup supabase functions serve --no-verify-jwt > /tmp/supabase-functions.log 2>&1 &
+    fi
     sleep 2
     print_success "Supabase Edge Functions started (logs: /tmp/supabase-functions.log)"
 }
@@ -94,7 +101,8 @@ start_step_converter() {
         docker network create supabase_network_cadam || true
     fi
 
-    docker compose up -d --build
+    # Start without --build for faster startup (use 'docker compose build' manually if needed)
+    docker compose up -d
     print_success "step-converter started on port 8080"
 }
 
@@ -122,9 +130,15 @@ start_ngrok() {
 start_vite() {
     print_status "Starting Vite development server..."
     cd "$PROJECT_ROOT"
-    nohup npm run dev > /tmp/vite-dev.log 2>&1 &
+    # Pass VITE_GOD_MODE env var if god mode is enabled
+    if [ "$GOD_MODE" = true ]; then
+        print_warning "Starting in GOD MODE - all data accessible without login"
+        VITE_GOD_MODE=true nohup npm run dev > /tmp/vite-dev.log 2>&1 &
+    else
+        nohup npm run dev > /tmp/vite-dev.log 2>&1 &
+    fi
     sleep 2
-    print_success "Vite dev server started on http://localhost:5173 (logs: /tmp/vite-dev.log)"
+    print_success "Vite dev server started (network accessible) (logs: /tmp/vite-dev.log)"
 }
 
 # Show status of all services
@@ -195,26 +209,58 @@ show_status() {
 stop_all() {
     print_status "Stopping all services..."
 
-    # Stop Vite
-    pkill -f "vite" 2>/dev/null && print_success "Stopped Vite" || true
-
-    # Stop ngrok
-    pkill -f "ngrok" 2>/dev/null && print_success "Stopped ngrok" || true
-
-    # Stop Supabase Functions
-    pkill -f "supabase functions serve" 2>/dev/null && print_success "Stopped Supabase Functions" || true
-
-    # Stop step-converter
-    if [ -d "$STEP_CONVERTER_DIR" ]; then
-        cd "$STEP_CONVERTER_DIR"
-        docker compose down 2>/dev/null && print_success "Stopped step-converter" || true
-    fi
-
-    # Stop Supabase
-    cd "$PROJECT_ROOT"
-    supabase stop 2>/dev/null && print_success "Stopped Supabase" || true
+    stop_vite
+    stop_ngrok
+    stop_functions
+    stop_step_converter
+    stop_supabase
 
     print_success "All services stopped"
+}
+
+# Individual stop functions
+stop_vite() {
+    if pkill -f "vite" 2>/dev/null; then
+        print_success "Stopped Vite"
+    else
+        print_warning "Vite was not running"
+    fi
+}
+
+stop_ngrok() {
+    if pkill -f "ngrok" 2>/dev/null; then
+        print_success "Stopped ngrok"
+    else
+        print_warning "ngrok was not running"
+    fi
+}
+
+stop_functions() {
+    if pkill -f "supabase functions serve" 2>/dev/null; then
+        print_success "Stopped Supabase Functions"
+    else
+        print_warning "Supabase Functions was not running"
+    fi
+}
+
+stop_step_converter() {
+    if [ -d "$STEP_CONVERTER_DIR" ]; then
+        cd "$STEP_CONVERTER_DIR"
+        if docker compose down 2>/dev/null; then
+            print_success "Stopped step-converter"
+        else
+            print_warning "step-converter was not running"
+        fi
+    fi
+}
+
+stop_supabase() {
+    cd "$PROJECT_ROOT"
+    if supabase stop 2>/dev/null; then
+        print_success "Stopped Supabase"
+    else
+        print_warning "Supabase was not running"
+    fi
 }
 
 # Main start function
@@ -289,7 +335,7 @@ start_all() {
 usage() {
     echo "CADAM Development Services Manager"
     echo ""
-    echo "Usage: $0 [command]"
+    echo "Usage: $0 [command] [options]"
     echo ""
     echo "Commands:"
     echo "  start       Start all services (interactive)"
@@ -297,17 +343,42 @@ usage() {
     echo "  status      Show status of all services"
     echo "  restart     Stop and start all services"
     echo ""
-    echo "Individual services:"
+    echo "Start individual services:"
     echo "  supabase    Start Supabase only"
     echo "  functions   Start Supabase Functions only"
     echo "  step        Start step-converter only"
     echo "  ngrok       Start ngrok only"
     echo "  vite        Start Vite dev server only"
     echo ""
+    echo "Stop individual services:"
+    echo "  stop-supabase    Stop Supabase only"
+    echo "  stop-functions   Stop Supabase Functions only"
+    echo "  stop-step        Stop step-converter only"
+    echo "  stop-ngrok       Stop ngrok only"
+    echo "  stop-vite        Stop Vite dev server only"
+    echo ""
+    echo "Options:"
+    echo "  --god-mode  Enable god mode (no login required, all data accessible)"
+    echo ""
 }
 
-# Parse command
-case "${1:-start}" in
+# Parse flags and command
+COMMAND="start"
+for arg in "$@"; do
+    case $arg in
+        --god-mode)
+            GOD_MODE=true
+            ;;
+        *)
+            # First non-flag argument is the command
+            if [ "$COMMAND" = "start" ] && [ "$arg" != "--god-mode" ]; then
+                COMMAND="$arg"
+            fi
+            ;;
+    esac
+done
+
+case "$COMMAND" in
     start)
         start_all
         ;;
@@ -340,6 +411,21 @@ case "${1:-start}" in
         ;;
     vite)
         start_vite
+        ;;
+    stop-vite)
+        stop_vite
+        ;;
+    stop-functions)
+        stop_functions
+        ;;
+    stop-step)
+        stop_step_converter
+        ;;
+    stop-ngrok)
+        stop_ngrok
+        ;;
+    stop-supabase)
+        stop_supabase
         ;;
     help|--help|-h)
         usage
