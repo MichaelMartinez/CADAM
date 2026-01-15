@@ -1,72 +1,108 @@
 ---
 description: Generate complete screenshot package for blog posts
-allowed-tools: Bash, Read, Write, Glob, mcp__plugin_playwright_playwright__*
+allowed-tools: Bash, Read, Write, Glob, AskUserQuestion, mcp__plugin_playwright_playwright__*
 argument-hint: <post-name>
 ---
 
 # Blog Post Screenshot Package Generator
 
-Generate a complete screenshot package for a blog post, including full captures, feature zooms with annotations, and social media hero images.
+Generate blog posts with integrated screenshot capture. Can either write new content from a topic or process existing drafts.
 
 ## Quick Start
 
 ```
-/blog-screenshots building-on-cadam
+/blog-screenshots my-new-post
 ```
 
 ## Workflow Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  1. PARSE         Read blog post, extract screenshot needs  │
-│  2. CAPTURE       Take full-page screenshots                │
-│  3. ZOOM          Crop to feature areas                     │
-│  4. ANNOTATE      Add text labels/callouts                  │
-│  5. HERO          Generate LinkedIn/social images           │
-│  6. PACKAGE       Organize and summarize                    │
+│  1. GATHER        Ask user for topic, platform, preferences │
+│  2. OUTLINE       Create post structure with screenshot     │
+│                   placeholders                              │
+│  3. WRITE         Draft content section by section          │
+│  4. CAPTURE       Take screenshots when user requests them  │
+│  5. ANNOTATE      Add text labels/callouts to screenshots   │
+│  6. HERO          Generate social media hero images         │
+│  7. FINALIZE      Output final post + asset manifest        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Phase 1: Parse Blog Post
+## Phase 1: Gather Requirements
 
-**Setup:**
+**IMPORTANT: Start by asking the user these questions using AskUserQuestion:**
+
+1. **Topic**: "What would you like to write about?"
+   - Let user describe the subject freely
+
+2. **Platform**: "Which platform is this for?"
+   - LinkedIn post (short, professional)
+   - Blog article (longer, detailed)
+   - Twitter/X thread
+   - Other
+
+3. **Screenshots**: "Would you like screenshots included?"
+   - Yes, capture as we go
+   - No, text only
+   - I'll provide my own images
+
+4. **Tone**: "What tone should the post have?"
+   - Professional/formal
+   - Casual/conversational
+   - Technical/detailed
+
+**Setup directory:**
 
 ```bash
 mkdir -p blog-screenshots/$ARGUMENTS
 ```
 
-**Find screenshot requirements:**
+---
 
-1. Read `blog-post-draft.md` or user-specified file
-2. Look for patterns like:
-   - `![Screenshot: description]`
-   - `*📸 Capture instruction*`
-   - Section headers describing features
+## Phase 2: Create Outline
 
-**Extract for each screenshot:**
+Based on user input, create a structured outline:
 
-- What to capture (full page, specific panel, dropdown open, etc.)
-- What feature to highlight (the zoom target)
-- What text annotation to add
+**For LinkedIn posts:**
 
-**Example parsing:**
+- Hook (1-2 sentences)
+- Main point (2-3 short paragraphs)
+- Key takeaway or CTA
+- Hashtags
 
-```markdown
-![Screenshot: Export dropdown]
-_📸 Show the export dropdown with all three options_
-```
+**For blog articles:**
 
-→ Capture: Editor with dropdown open
-→ Zoom: Bottom-right corner (Parameters panel, export area)
-→ Annotate: "STL • SCAD • STEP Export Options"
+- Introduction
+- 3-5 main sections with headers
+- Screenshot opportunities marked as `[Screenshot: description]`
+- Conclusion
+
+**Present outline to user for approval before proceeding.**
 
 ---
 
-## Phase 2: Capture Full Screenshots
+## Phase 3: Write Content
 
-Use Playwright MCP tools to capture base screenshots:
+Write the post section by section. After each major section:
+
+- Show the user what you've written
+- Ask if they want any changes
+- If screenshots were requested, ask: "Should I capture a screenshot for this section?"
+
+**Screenshot placeholder format in draft:**
+
+```markdown
+[Screenshot: Brief description of what to capture]
+```
+
+---
+
+## Phase 4: Capture Screenshots
+
+When the user requests a screenshot, use Playwright MCP tools:
 
 ```
 browser_navigate → browser_snapshot → browser_click → browser_take_screenshot
@@ -76,44 +112,23 @@ browser_navigate → browser_snapshot → browser_click → browser_take_screens
 
 **For each screenshot:**
 
-1. Navigate to correct URL/state
-2. Interact to reach desired UI state (open dropdowns, load models)
+1. Ask user what URL/state to capture
+2. Navigate and interact to reach desired UI state
 3. Wait for animations/loading
 4. Capture full viewport
+5. Ask if user wants zoom/annotation
 
 ---
 
-## Phase 3: Feature Zoom
+## Phase 5: Annotate Screenshots
 
-Crop screenshots to focus on the specific feature being highlighted.
-
-**Using ImageMagick:**
+**Zoom to feature (ImageMagick):**
 
 ```bash
-# Crop to specific region (x, y, width, height)
 convert input.png -crop WIDTHxHEIGHT+X+Y +repage output-zoom.png
-
-# Example: Crop bottom-right quadrant for export dropdown
-convert 01-full.png -gravity SouthEast -crop 400x300+0+0 +repage 01-export-zoom.png
 ```
 
-**Common crop targets for CADAM:**
-
-| Feature            | Gravity   | Crop Size | Description                      |
-| ------------------ | --------- | --------- | -------------------------------- |
-| Export dropdown    | SouthEast | 350x250   | Parameters panel, export buttons |
-| Compilation events | West      | 450x400   | Chat panel, event stream         |
-| 3D Viewer          | Center    | 500x400   | Model preview                    |
-| Code panel         | Center    | 400x350   | Monaco editor                    |
-| Parameters         | East      | 300x400   | Right panel sliders              |
-
----
-
-## Phase 4: Annotate with Text Labels
-
-Add text callouts to highlight the feature.
-
-**Basic annotation:**
+**Add text label:**
 
 ```bash
 convert input.png \
@@ -123,42 +138,17 @@ convert input.png \
   output-annotated.png
 ```
 
-**Annotation with bottom label:**
-
-```bash
-convert input.png \
-  -fill 'rgba(26,26,46,0.85)' -draw "rectangle 0,$((HEIGHT-50)) WIDTH,HEIGHT" \
-  -font DejaVu-Sans-Bold -pointsize 20 -fill white \
-  -gravity South -annotate +0+15 'Feature Description' \
-  output-annotated.png
-```
-
 **Add highlight border:**
 
 ```bash
-convert input.png \
-  -bordercolor '#00A6FF' -border 3 \
-  output-highlighted.png
-```
-
-**Combined (zoom + annotate):**
-
-```bash
-# Crop, add border, add label
-convert input.png \
-  -gravity SouthEast -crop 400x300+0+0 +repage \
-  -bordercolor '#00A6FF' -border 3 \
-  -fill 'rgba(26,26,46,0.9)' -draw 'rectangle 0,0 406,50' \
-  -font DejaVu-Sans-Bold -pointsize 18 -fill white \
-  -gravity NorthWest -annotate +12+15 'STEP Export Options' \
-  output-zoom-annotated.png
+convert input.png -bordercolor '#00A6FF' -border 3 output-highlighted.png
 ```
 
 ---
 
-## Phase 5: Hero Image Generation
+## Phase 6: Hero Image Generation
 
-Create social media optimized images.
+Create social media optimized images when requested.
 
 **LinkedIn (1200x627):**
 
@@ -174,63 +164,45 @@ convert input.png \
 **Twitter/X (1200x675):**
 
 ```bash
-convert input.png \
-  -resize 1200x675^ -gravity center -extent 1200x675 \
-  hero-twitter.png
-```
-
-**Square for Instagram (1080x1080):**
-
-```bash
-convert input.png \
-  -resize 1080x1080^ -gravity center -extent 1080x1080 \
-  hero-instagram.png
+convert input.png -resize 1200x675^ -gravity center -extent 1200x675 hero-twitter.png
 ```
 
 ---
 
-## Phase 6: Package Summary
+## Phase 7: Finalize
 
-After generating all assets, create a manifest:
+1. **Save the post** to `blog-screenshots/<post-name>/post.md`
+2. **Generate MANIFEST.md** listing all assets
+3. **Present summary** to user with:
+   - Final post content
+   - List of screenshots captured
+   - Hero images generated
+   - Any next steps (publish, review, etc.)
 
 **Output folder structure:**
 
 ```
 blog-screenshots/<post-name>/
-├── 01-export-dropdown.png          # Full screenshot
-├── 01-export-dropdown-zoom.png     # Cropped to feature
-├── 01-export-dropdown-final.png    # Zoom + annotation
-├── 02-compilation.png
-├── 02-compilation-zoom.png
-├── 02-compilation-final.png
-├── ...
+├── post.md                         # The written post
+├── 01-feature.png                  # Screenshots
+├── 01-feature-annotated.png
 ├── hero-linkedin.png
 ├── hero-twitter.png
-└── MANIFEST.md                     # Summary of all assets
+└── MANIFEST.md
 ```
 
-**Generate MANIFEST.md:**
+---
 
-```markdown
-# Screenshot Package: [Post Name]
+## Alternative Mode: Process Existing Draft
 
-## Full Screenshots
+If user has an existing draft, skip to screenshot extraction:
 
-- 01-export-dropdown.png - Export menu with STL/SCAD/STEP
-- 02-compilation.png - Compilation event stream
-  ...
-
-## Feature Zooms (for blog embedding)
-
-- 01-export-dropdown-final.png - "STEP Export Options"
-- 02-compilation-final.png - "Real-Time Compilation Events"
-  ...
-
-## Social Media
-
-- hero-linkedin.png (1200x627)
-- hero-twitter.png (1200x675)
-```
+1. Read `blog-post-draft.md` or user-specified file
+2. Look for patterns like:
+   - `![Screenshot: description]`
+   - `*📸 Capture instruction*`
+3. Capture and annotate each screenshot
+4. Replace placeholders with actual image paths
 
 ---
 
@@ -243,24 +215,40 @@ blog-screenshots/<post-name>/
 | `/cadam/editor/:id` | EditorView | 4-panel layout, model, code, params |
 | `/cadam/history` | HistoryView | Past creations grid |
 
-**Panel positions for cropping:**
+**Common crop targets:**
 
-- Chat: Left ~25% of viewport
-- Code: Left-center ~20%
-- Viewer: Center ~35%
-- Parameters: Right ~20%
-
-**Common feature locations:**
-
-- Export dropdown: Bottom-right corner (Parameters panel)
-- Compilation events: Chat panel, middle section
-- Model viewer: Center of viewport
-- Parameter sliders: Right panel
+| Feature            | Gravity   | Crop Size | Description                      |
+| ------------------ | --------- | --------- | -------------------------------- |
+| Export dropdown    | SouthEast | 350x250   | Parameters panel, export buttons |
+| Compilation events | West      | 450x400   | Chat panel, event stream         |
+| 3D Viewer          | Center    | 500x400   | Model preview                    |
+| Code panel         | Center    | 400x350   | Monaco editor                    |
+| Parameters         | East      | 300x400   | Right panel sliders              |
 
 ---
 
 ## Example Session
 
 ```
-User: /blog-screenshots building-on-cadam
+User: /blog-screenshots my-new-feature
+
+Claude: What would you like to write about?
+        - Platform: LinkedIn / Blog / Twitter
+        - Screenshots: Yes / No
+        - Tone: Professional / Casual / Technical
+
+User: I want to write a LinkedIn post about the new export feature.
+      Include screenshots, keep it professional.
+
+Claude: Here's an outline:
+        1. Hook - "Just shipped STEP export..."
+        2. Main point - Why this matters for CAD workflows
+        3. Screenshot of export dropdown
+        4. CTA - Try it out
+
+        Does this look good?
+
+User: Yes, proceed
+
+Claude: [Writes post, captures screenshots as needed, delivers final package]
 ```
