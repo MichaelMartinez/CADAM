@@ -8,6 +8,40 @@
 
 <h1 align="center"> ⛮ The Open Source Text to CAD Web App ⛮ </h1>
 
+## Fork Changes
+
+This fork adds several enhancements to the original CADAM project:
+
+### New Features
+
+- **STEP File Export** - Export models to STEP format via FreeCAD Docker service for CAD tool compatibility (Fusion 360, SolidWorks, etc.)
+- **Real-Time Compilation Events** - Streaming compilation feedback showing library loading, render progress, timing, and detailed errors
+- **Code Panel with Source Mapping** - Click-to-code navigation linking 3D geometry back to OpenSCAD source lines
+- **4-Panel Resizable Layout** - Chat, Code, Viewer, and Parameters panels with collapse/resize support
+- **Enhanced Image-to-CAD** - Improved sketch interpretation with 2D object detection for better parametric model generation
+- **BOSL2 Output Modes** - Printable (manifold) and Assembly (multi-part) generation modes
+
+### Infrastructure
+
+- **OpenRouter Migration** - Prompt and title generation moved to OpenRouter for flexibility
+- **Services Manager** - `scripts/start-services.sh` for managing all development services
+- **Claude Code Skills** - `/blog-screenshots` command for automated blog post creation with screenshots
+
+### Quick Start (This Fork)
+
+```bash
+# Start all services (Supabase, Edge Functions, STEP converter)
+./scripts/start-services.sh start
+
+# Check service status
+./scripts/start-services.sh status
+
+# Stop all services
+./scripts/start-services.sh stop
+```
+
+---
+
 <div align="center">
 
 [![Stars](https://img.shields.io/github/stars/Adam-CAD/cadam?style=social&logo=github)](https://github.com/Adam-CAD/cadam/stargazers)
