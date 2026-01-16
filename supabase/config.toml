@@ -49,6 +49,10 @@ verify_jwt = true
 enabled = true
 verify_jwt = true
 
+[functions.workflow-orchestrator]
+enabled = true
+verify_jwt = true
+
 [api]
 enabled = true
 port = 54321

@@ -80,11 +80,11 @@ start_supabase() {
 start_supabase_functions() {
     print_status "Starting Supabase Edge Functions..."
     cd "$PROJECT_ROOT"
-    # Run in background, pass GOD_MODE env var if enabled
+    # Run in background with env file, pass GOD_MODE env var if enabled
     if [ "$GOD_MODE" = true ]; then
-        GOD_MODE=true nohup supabase functions serve --no-verify-jwt > /tmp/supabase-functions.log 2>&1 &
+        GOD_MODE=true nohup supabase functions serve --no-verify-jwt --env-file ./supabase/functions/.env > /tmp/supabase-functions.log 2>&1 &
     else
-        nohup supabase functions serve --no-verify-jwt > /tmp/supabase-functions.log 2>&1 &
+        nohup supabase functions serve --no-verify-jwt --env-file ./supabase/functions/.env > /tmp/supabase-functions.log 2>&1 &
     fi
     sleep 2
     print_success "Supabase Edge Functions started (logs: /tmp/supabase-functions.log)"

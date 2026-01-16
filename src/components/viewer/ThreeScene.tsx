@@ -163,6 +163,7 @@ export function ThreeScene({ geometry }: { geometry: THREE.BufferGeometry }) {
       <Canvas
         className="block h-full w-full"
         onPointerMissed={handleMissedClick}
+        gl={{ preserveDrawingBuffer: true }}
       >
         <color attach="background" args={['#3B3B3B']} />
         {isOrthographic ? (

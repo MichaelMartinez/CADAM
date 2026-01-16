@@ -24,6 +24,7 @@ import { ImageViewer } from '@/components/ImageViewer';
 import { TreeNode } from '@shared/Tree';
 import { UserAvatar } from '@/components/chat/UserAvatar';
 import { useEditMessageMutation } from '@/services/messageService';
+import { WorkflowTriggerButton } from '@/components/workflow/WorkflowTriggerButton';
 
 interface UserMessageProps {
   isLoading: boolean;
@@ -137,6 +138,17 @@ export function UserMessage({ message, isLoading }: UserMessageProps) {
             <div className="flex flex-wrap gap-1">
               <UserMessageImagesViewer message={message} />
             </div>
+            {/* Workflow trigger button for messages with images */}
+            {message.content.images && message.content.images.length > 0 && (
+              <div className="mt-2">
+                <WorkflowTriggerButton
+                  conversationId={conversation?.id || ''}
+                  messageId={message.id}
+                  hasImages={true}
+                  disabled={isLoading}
+                />
+              </div>
+            )}
             {(isEditing || (input && input.length > 0)) && (
               <div
                 className={cn(

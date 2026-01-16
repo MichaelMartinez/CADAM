@@ -61,6 +61,63 @@ export type Database = {
         };
         Relationships: [];
       };
+      inflection_points: {
+        Row: {
+          context: Json;
+          created_at: string;
+          description: string | null;
+          id: string;
+          options: Json;
+          resolved_at: string | null;
+          step_id: string;
+          title: string;
+          user_choice: string | null;
+          user_feedback: string | null;
+          workflow_id: string;
+        };
+        Insert: {
+          context?: Json;
+          created_at?: string;
+          description?: string | null;
+          id?: string;
+          options: Json;
+          resolved_at?: string | null;
+          step_id: string;
+          title: string;
+          user_choice?: string | null;
+          user_feedback?: string | null;
+          workflow_id: string;
+        };
+        Update: {
+          context?: Json;
+          created_at?: string;
+          description?: string | null;
+          id?: string;
+          options?: Json;
+          resolved_at?: string | null;
+          step_id?: string;
+          title?: string;
+          user_choice?: string | null;
+          user_feedback?: string | null;
+          workflow_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'inflection_points_step_id_fkey';
+            columns: ['step_id'];
+            isOneToOne: false;
+            referencedRelation: 'workflow_steps';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'inflection_points_workflow_id_fkey';
+            columns: ['workflow_id'];
+            isOneToOne: false;
+            referencedRelation: 'workflows';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
       messages: {
         Row: {
           content: Json;
@@ -92,6 +149,122 @@ export type Database = {
             columns: ['conversation_id'];
             isOneToOne: false;
             referencedRelation: 'conversations';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      workflow_steps: {
+        Row: {
+          completed_at: string | null;
+          created_at: string;
+          duration_ms: number | null;
+          error: string | null;
+          id: string;
+          input: Json | null;
+          model_used: string | null;
+          output: Json | null;
+          prompt_version: string | null;
+          status: string;
+          step_name: string;
+          step_type: string;
+          tokens_used: number | null;
+          workflow_id: string;
+        };
+        Insert: {
+          completed_at?: string | null;
+          created_at?: string;
+          duration_ms?: number | null;
+          error?: string | null;
+          id?: string;
+          input?: Json | null;
+          model_used?: string | null;
+          output?: Json | null;
+          prompt_version?: string | null;
+          status?: string;
+          step_name: string;
+          step_type: string;
+          tokens_used?: number | null;
+          workflow_id: string;
+        };
+        Update: {
+          completed_at?: string | null;
+          created_at?: string;
+          duration_ms?: number | null;
+          error?: string | null;
+          id?: string;
+          input?: Json | null;
+          model_used?: string | null;
+          output?: Json | null;
+          prompt_version?: string | null;
+          status?: string;
+          step_name?: string;
+          step_type?: string;
+          tokens_used?: number | null;
+          workflow_id?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'workflow_steps_workflow_id_fkey';
+            columns: ['workflow_id'];
+            isOneToOne: false;
+            referencedRelation: 'workflows';
+            referencedColumns: ['id'];
+          },
+        ];
+      };
+      workflows: {
+        Row: {
+          config: Json;
+          conversation_id: string;
+          created_at: string;
+          current_step: string | null;
+          error: string | null;
+          id: string;
+          state: Json;
+          status: string;
+          trigger_message_id: string;
+          updated_at: string;
+          workflow_type: string;
+        };
+        Insert: {
+          config?: Json;
+          conversation_id: string;
+          created_at?: string;
+          current_step?: string | null;
+          error?: string | null;
+          id?: string;
+          state?: Json;
+          status?: string;
+          trigger_message_id: string;
+          updated_at?: string;
+          workflow_type: string;
+        };
+        Update: {
+          config?: Json;
+          conversation_id?: string;
+          created_at?: string;
+          current_step?: string | null;
+          error?: string | null;
+          id?: string;
+          state?: Json;
+          status?: string;
+          trigger_message_id?: string;
+          updated_at?: string;
+          workflow_type?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'workflows_conversation_id_fkey';
+            columns: ['conversation_id'];
+            isOneToOne: false;
+            referencedRelation: 'conversations';
+            referencedColumns: ['id'];
+          },
+          {
+            foreignKeyName: 'workflows_trigger_message_id_fkey';
+            columns: ['trigger_message_id'];
+            isOneToOne: false;
+            referencedRelation: 'messages';
             referencedColumns: ['id'];
           },
         ];
