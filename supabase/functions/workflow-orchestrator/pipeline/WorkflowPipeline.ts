@@ -6,7 +6,7 @@
  */
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import type { Database } from '@shared/database.ts';
+import type { Database } from '../../_shared/database.ts';
 import type {
   Workflow,
   WorkflowState,
@@ -18,7 +18,7 @@ import type {
   InflectionPointContext,
   InflectionPointOption,
   WorkflowEvent,
-} from '@shared/workflowTypes.ts';
+} from '../../_shared/workflowTypes.ts';
 
 // =============================================================================
 // Types

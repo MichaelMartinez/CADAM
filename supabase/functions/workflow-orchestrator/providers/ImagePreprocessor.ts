@@ -9,7 +9,7 @@
  */
 
 import { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import type { Database } from '@shared/database.ts';
+import type { Database } from '../../_shared/database.ts';
 import {
   getModelMetadata,
   getImagePreprocessingForModel,
@@ -263,15 +263,97 @@ export class ImagePreprocessor {
   // ---------------------------------------------------------------------------
 
   private async fetchImage(imageId: string): Promise<ArrayBuffer> {
-    const { data, error } = await this.supabase.storage
+    // First, try direct download (in case imageId is already a full path)
+    const { data: directData, error: directError } = await this.supabase.storage
       .from(this.bucketName)
       .download(imageId);
+
+    if (!directError && directData) {
+      return directData.arrayBuffer();
+    }
+
+    // If direct download fails, search for the file by ID in the path
+    // The storage path format is: {user_id}/{conversation_id}/{image_id}
+    // We need to find the full path that ends with this image ID
+    const imagePath = await this.findImagePath(imageId);
+    if (!imagePath) {
+      throw new Error(
+        `Failed to fetch image: Image not found with ID ${imageId}`,
+      );
+    }
+
+    const { data, error } = await this.supabase.storage
+      .from(this.bucketName)
+      .download(imagePath);
 
     if (error) {
       throw new Error(`Failed to fetch image: ${error.message}`);
     }
 
     return data.arrayBuffer();
+  }
+
+  /**
+   * Find the full storage path for an image by its ID
+   * Searches the storage bucket for a file whose path ends with the given ID
+   */
+  private async findImagePath(imageId: string): Promise<string | null> {
+    // Try using RPC to call a custom function if available
+    // Otherwise fallback to listing method
+    return await this.findImagePathByListing(imageId);
+  }
+
+  /**
+   * Find image path by listing storage objects
+   * Storage path format: {user_id}/{conversation_id}/{image_id}
+   */
+  private async findImagePathByListing(
+    imageId: string,
+  ): Promise<string | null> {
+    // List root folders (user IDs) in the bucket
+    const { data: folders, error: folderError } = await this.supabase.storage
+      .from(this.bucketName)
+      .list('', { limit: 1000 });
+
+    if (folderError || !folders) {
+      console.error('Failed to list storage folders:', folderError);
+      return null;
+    }
+
+    // Search through each user folder
+    for (const folder of folders) {
+      // Folders have metadata.mimetype as null, files have a mimetype
+      // Also check if it looks like a UUID (user_id folder)
+      if (!folder.name) continue;
+
+      const { data: subFolders } = await this.supabase.storage
+        .from(this.bucketName)
+        .list(folder.name, { limit: 1000 });
+
+      if (!subFolders) continue;
+
+      // Search through conversation folders
+      for (const subFolder of subFolders) {
+        if (!subFolder.name) continue;
+
+        const { data: files } = await this.supabase.storage
+          .from(this.bucketName)
+          .list(`${folder.name}/${subFolder.name}`, { limit: 1000 });
+
+        if (!files) continue;
+
+        // Look for the file with matching ID
+        const matchingFile = files.find(
+          (f) => f.name === imageId || f.name.includes(imageId),
+        );
+
+        if (matchingFile) {
+          return `${folder.name}/${subFolder.name}/${matchingFile.name}`;
+        }
+      }
+    }
+
+    return null;
   }
 
   private getImageDimensions(imageData: ArrayBuffer): {

@@ -341,10 +341,12 @@ Deno.serve(async (req) => {
     },
   });
 
-  // In god mode, skip auth check
+  // Get user data - required for storage paths even in god mode
+  const { data: userData, error: userError } =
+    await supabaseClient.auth.getUser();
+
+  // In god mode, skip auth enforcement but still try to get user
   if (!isGodMode) {
-    const { data: userData, error: userError } =
-      await supabaseClient.auth.getUser();
     if (!userData.user) {
       return new Response(JSON.stringify({ error: 'Unauthorized' }), {
         status: 401,
@@ -358,6 +360,9 @@ Deno.serve(async (req) => {
       });
     }
   }
+
+  // Use user ID if available, otherwise use 'anonymous' for god mode
+  const userId = userData?.user?.id ?? 'anonymous';
 
   const {
     messageId,
@@ -445,7 +450,7 @@ Deno.serve(async (req) => {
           const formatted = await formatUserMessage(
             msg,
             supabaseClient,
-            userData.user.id,
+            userId,
             conversationId,
           );
           // Convert Anthropic-style to OpenAI-style

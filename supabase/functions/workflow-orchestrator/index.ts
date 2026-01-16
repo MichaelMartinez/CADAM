@@ -8,7 +8,7 @@
 
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { createClient, SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import type { Database } from '@shared/database.ts';
+import type { Database } from '../_shared/database.ts';
 import type {
   Workflow,
   WorkflowConfig,
@@ -20,7 +20,7 @@ import type {
   CancelWorkflowRequest,
   ProvideScreenshotRequest,
   VisionToScadState,
-} from '@shared/workflowTypes.ts';
+} from '../_shared/workflowTypes.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import { VisionToScadPipeline } from './pipeline/VisionToScadPipeline.ts';
 import type { PipelineContext } from './pipeline/WorkflowPipeline.ts';
@@ -46,35 +46,44 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
+    const isGodMode = Deno.env.get('GOD_MODE') === 'true';
+
     // Create Supabase client with user's auth token
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
+    if (!authHeader && !isGodMode) {
       return errorResponse('Missing authorization header', 401);
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY');
+    const supabaseServiceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!supabaseUrl || !supabaseAnonKey) {
       return errorResponse('Server configuration error', 500);
     }
 
-    const supabase = createClient<Database>(supabaseUrl, supabaseAnonKey, {
-      global: {
-        headers: { Authorization: authHeader },
-      },
-    });
+    // In GOD_MODE, use service role key for full access
+    const supabase =
+      isGodMode && supabaseServiceRoleKey
+        ? createClient<Database>(supabaseUrl, supabaseServiceRoleKey)
+        : createClient<Database>(supabaseUrl, supabaseAnonKey, {
+            global: {
+              headers: { Authorization: authHeader! },
+            },
+          });
 
-    // Get user from auth
+    // Get user from auth (skip in god mode)
     const {
       data: { user },
       error: authError,
     } = await supabase.auth.getUser();
-    if (authError || !user) {
+
+    if (!isGodMode && (authError || !user)) {
       return errorResponse('Invalid authentication', 401);
     }
 
-    const ctx: RequestContext = { supabase, userId: user.id };
+    const userId = user?.id ?? 'anonymous';
+    const ctx: RequestContext = { supabase, userId };
 
     // Parse request
     const body: WorkflowOrchestratorRequest = await req.json();
@@ -117,6 +126,8 @@ async function handleStart(
   ctx: RequestContext,
   request: StartWorkflowRequest,
 ): Promise<Response> {
+  const isGodMode = Deno.env.get('GOD_MODE') === 'true';
+
   // Validate conversation access
   const { data: conversation, error: convError } = await ctx.supabase
     .from('conversations')
@@ -128,7 +139,7 @@ async function handleStart(
     return errorResponse('Conversation not found', 404);
   }
 
-  if (conversation.user_id !== ctx.userId) {
+  if (!isGodMode && conversation.user_id !== ctx.userId) {
     return errorResponse('Access denied', 403);
   }
 
@@ -188,6 +199,8 @@ async function handleResume(
   ctx: RequestContext,
   request: ResumeWorkflowRequest,
 ): Promise<Response> {
+  const isGodMode = Deno.env.get('GOD_MODE') === 'true';
+
   // Load workflow
   const { data: workflow, error } = await ctx.supabase
     .from('workflows')
@@ -201,7 +214,7 @@ async function handleResume(
 
   // Check access
   const conv = workflow.conversations as unknown as { user_id: string };
-  if (conv.user_id !== ctx.userId) {
+  if (!isGodMode && conv.user_id !== ctx.userId) {
     return errorResponse('Access denied', 403);
   }
 
@@ -232,6 +245,8 @@ async function handleResolveInflection(
   ctx: RequestContext,
   request: ResolveInflectionRequest,
 ): Promise<Response> {
+  const isGodMode = Deno.env.get('GOD_MODE') === 'true';
+
   // Load inflection point with workflow
   const { data: inflectionPoint, error } = await ctx.supabase
     .from('inflection_points')
@@ -247,7 +262,7 @@ async function handleResolveInflection(
   const workflow = inflectionPoint.workflows as unknown as Workflow & {
     conversations: { user_id: string };
   };
-  if (workflow.conversations.user_id !== ctx.userId) {
+  if (!isGodMode && workflow.conversations.user_id !== ctx.userId) {
     return errorResponse('Access denied', 403);
   }
 
@@ -291,6 +306,8 @@ async function handleCancel(
   ctx: RequestContext,
   request: CancelWorkflowRequest,
 ): Promise<Response> {
+  const isGodMode = Deno.env.get('GOD_MODE') === 'true';
+
   // Load workflow
   const { data: workflow, error } = await ctx.supabase
     .from('workflows')
@@ -304,7 +321,7 @@ async function handleCancel(
 
   // Check access
   const conv = workflow.conversations as unknown as { user_id: string };
-  if (conv.user_id !== ctx.userId) {
+  if (!isGodMode && conv.user_id !== ctx.userId) {
     return errorResponse('Access denied', 403);
   }
 
@@ -340,6 +357,8 @@ async function handleProvideScreenshot(
   ctx: RequestContext,
   request: ProvideScreenshotRequest,
 ): Promise<Response> {
+  const isGodMode = Deno.env.get('GOD_MODE') === 'true';
+
   // Load workflow
   const { data: workflow, error } = await ctx.supabase
     .from('workflows')
@@ -353,7 +372,7 @@ async function handleProvideScreenshot(
 
   // Check access
   const conv = workflow.conversations as unknown as { user_id: string };
-  if (conv.user_id !== ctx.userId) {
+  if (!isGodMode && conv.user_id !== ctx.userId) {
     return errorResponse('Access denied', 403);
   }
 

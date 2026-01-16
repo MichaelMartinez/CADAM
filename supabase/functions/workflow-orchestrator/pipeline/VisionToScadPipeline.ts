@@ -17,7 +17,7 @@ import type {
   VLMStructuredOutput,
   VerificationResult,
   InflectionPointOption,
-} from '@shared/workflowTypes.ts';
+} from '../../_shared/workflowTypes.ts';
 import { getModelForTier, getModelMetadata } from '../config/modelRegistry.ts';
 import { getPromptTemplate } from '../config/promptLibrary.ts';
 import {
