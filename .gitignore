@@ -33,3 +33,7 @@ dist-ssr
 .env.langfuse
 
 .secrets.local
+
+# Test artifacts
+.playwright-mcp/
+*.jpg
