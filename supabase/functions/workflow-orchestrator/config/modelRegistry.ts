@@ -9,7 +9,7 @@ import type {
   ModelTier,
   ModelEntry,
   ModelCapabilities,
-} from '@shared/workflowTypes.ts';
+} from '../../_shared/workflowTypes.ts';
 
 // =============================================================================
 // Model Registry
@@ -140,8 +140,8 @@ const MODEL_REGISTRY: ModelEntry[] = [
   // === EXPERIMENTAL TIER ===
   // Newer models, may have cutting-edge capabilities but less tested
   {
-    id: 'google/gemini-2.5-flash-preview',
-    name: 'Gemini 2.5 Flash Preview',
+    id: 'google/gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
     provider: 'google',
     tier: 'experimental',
     capabilities: {
