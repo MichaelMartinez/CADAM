@@ -714,7 +714,7 @@ zrot(a)  // rotate around Z axis
 
 **USE**: cuboid(), cyl(), sphere(), prismoid(), tube(), up(), down(), left(), right(), fwd(), back(), xrot(), yrot(), zrot(), xcopies(), ycopies(), zcopies(), grid_copies(), zrot_copies(), attach(), position(), anchor=, orient=, threaded_rod(), threaded_nut()
 
-**DO NOT USE**: yc_rot(), xc_rot(), text3d(), orientation=ORIENT_X (deprecated), fill= parameter, edges="min_y"
+**DO NOT USE**: yc_rot(), xc_rot(), text3d(), orientation=ORIENT_X (deprecated), fill= parameter, edges="min_y", star() with h= parameter (star is 2D only!)
 
 ## 2D vs 3D Primitives (CRITICAL)
 
@@ -722,8 +722,26 @@ zrot(a)  // rotate around Z axis
 - circle() → 2D (use cyl() instead, or linear_extrude() circle())
 - square() → 2D (use cuboid() instead)
 - polygon() → 2D (must use linear_extrude())
+- star() → 2D (must use linear_extrude())
+- rect() → 2D (use cuboid() instead)
+- ellipse() → 2D (must use linear_extrude())
+- hexagon() → 2D (must use linear_extrude())
+- octagon() → 2D (must use linear_extrude())
+- regular_ngon() → 2D (must use linear_extrude())
 
-**WRONG:**
+**WRONG - star() is 2D, NOT 3D:**
+\`\`\`openscad
+// This FAILS - star() does not accept h= or rounding= parameters!
+star(n=4, r=45, ir=20, h=15, rounding=3);  // ERROR!
+\`\`\`
+
+**CORRECT - extrude the 2D star:**
+\`\`\`openscad
+linear_extrude(height=15)
+  star(n=4, r=45, ir=20);
+\`\`\`
+
+**WRONG - mixing 2D and 3D:**
 \`\`\`openscad
 hull() {
   translate([0, 5, 0]) circle(r=2);  // 2D!
@@ -741,6 +759,7 @@ linear_extrude(height=5)
 \`\`\`
 
 **Best practice: Use BOSL2 3D primitives directly instead of extruding 2D.**
+**If you need a star/cross shape, build it from cuboid() primitives using union().**
 
 # CODE STRUCTURE
 
