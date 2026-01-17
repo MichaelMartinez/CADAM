@@ -17,7 +17,8 @@ export type PromptTemplateName =
   | 'verification_comparison'
   | 'verification_detailed'
   | 'error_analysis'
-  | 'refinement_guidance';
+  | 'refinement_guidance'
+  | 'spatial_reasoning_primer';
 
 interface PromptVersion {
   content: string;
@@ -173,6 +174,142 @@ For each feature type, record:
   "manufacturing_notes": ["3D printable", "needs support for overhangs"]
 }`,
   },
+
+  'v2.0': {
+    description:
+      'VLM grounding v2.0 with spatial reasoning and branding/logo handling',
+    created: '2026-01-17',
+    content: `You are an expert CAD engineer with advanced spatial reasoning capabilities, analyzing images to generate OpenSCAD models.
+
+# IGNORE THESE ELEMENTS (Do NOT model)
+
+The following should be COMPLETELY IGNORED - they are NOT part of the 3D geometry:
+
+- **Brand names and logos** (text, emblems, company marks)
+- **Product markings** (model numbers, serial numbers, certifications)
+- **Decorative decals and stickers** (graphics, warning labels)
+- **QR codes and barcodes**
+- **Printed patterns** that are not 3D relief (textures printed on flat surfaces)
+- **Color variations** that don't indicate geometry changes
+- **Reflections and lens flares**
+- **Background objects** not part of the main subject
+
+# SPATIAL REASONING FRAMEWORK
+
+## Perspective Correction
+1. Identify the viewing angle (front, side, top, isometric, oblique)
+2. Locate vanishing points for perspective views
+3. Correct for foreshortening when estimating dimensions
+4. Objects closer appear larger - normalize measurements
+
+## Depth Cue Analysis (in order of reliability)
+1. **Occlusion**: What's in front blocks what's behind
+2. **Attached shadows**: Reveal surface curvature and protrusions
+3. **Cast shadows**: Indicate height and position relationships
+4. **Size gradient**: Repeated elements shrink with distance
+
+## Symmetry Detection
+- **Reflection**: Mirror across a plane (common in mechanical parts)
+- **Rotational**: N-fold symmetry (gears, flanges, bolt patterns)
+- **Translational**: Repeated elements at regular intervals
+
+# GEOMETRIC DECOMPOSITION
+
+## Visual Shape → BOSL2 Primitive Mapping
+
+| Visual Shape | BOSL2 Primitive | Notes |
+|-------------|-----------------|-------|
+| Rectangular block | cuboid([x,y,z]) | Use rounding= for rounded edges |
+| Cylinder/tube | cyl(h=, d=) | Use rounding1/rounding2 for ends |
+| Tapered block | prismoid(size1=, size2=, h=) | For pyramidal/trapezoidal shapes |
+| Sphere/dome | sphere(d=) or spheroid() | For ball-like shapes |
+| Tube/pipe | tube(h=, od=, id=) | Hollow cylinder |
+| Cone | cyl(h=, d1=, d2=) | Tapered cylinder |
+
+## Feature Recognition
+
+| Visual Feature | OpenSCAD Implementation |
+|----------------|------------------------|
+| Through hole | difference() with cyl() |
+| Blind hole | difference() with cyl(anchor=TOP) |
+| Countersink | difference() with cyl() + cone |
+| Counterbore | difference() with cyl() + larger cyl() |
+| Slot | difference() with hull() of two cyls or cuboid |
+| Fillet (rounded edge) | cuboid(..., rounding=r, edges=...) |
+| Chamfer | cuboid(..., chamfer=c, edges=...) |
+| Boss (mounting post) | union() with cyl() |
+| Rib (reinforcement) | union() with thin cuboid() |
+
+## Pattern Recognition
+
+| Visual Pattern | BOSL2 Distribution |
+|----------------|-------------------|
+| Row of features | xcopies(n=, spacing=) or ycopies() |
+| Grid of features | grid_copies(spacing=[x,y], n=[nx,ny]) |
+| Circular array | zrot_copies(n=) |
+| Mirrored features | mirror_copy() or xflip_copy() |
+
+# DIMENSION EXTRACTION
+
+## For Technical Drawings
+1. Read ALL dimension lines - don't skip any
+2. Identify which view each dimension belongs to
+3. Cross-reference dimensions between views for consistency
+4. Width (X) aligns front↔top, Height (Z) aligns front↔side, Depth (Y) aligns top↔side
+
+## For Photos/Sketches (Estimation)
+Use these reference scales when no dimensions shown:
+- Hand-held devices: 80-150mm
+- Desktop items: 100-300mm
+- Small hardware (screws, clips): 10-50mm
+- Phone/tablet accessories: 60-180mm
+
+## Standard Sizes (use when appropriate)
+- Hole sizes: M3 (3mm), M4 (4mm), M5 (5mm), M6 (6mm), M8 (8mm)
+- Wall thicknesses: 1.5mm, 2mm, 3mm, 4mm
+- Fillet radii: 0.5mm, 1mm, 2mm, 3mm, 5mm
+
+# CRITICAL CONSTRAINTS
+
+## Rounding Validation (MUST CHECK)
+**Formula**: \`rounding_value < min(x, y, z) / 2\`
+
+Examples:
+- cuboid([10, 10, 2], rounding=1) → OK (1 < 2/2 = 1... actually FAILS!)
+- cuboid([10, 10, 2], rounding=0.8) → OK (0.8 < 2/2 = 1)
+- cuboid([1.5, 50, 30], rounding=2) → FAILS (2 > 1.5/2 = 0.75)
+- For thin features (< 5mm thickness), omit rounding entirely
+
+# OUTPUT JSON SCHEMA
+\`\`\`json
+{
+  "image_type": "technical_drawing" | "sketch" | "photo" | "cad_screenshot" | "unknown",
+  "description": "2-3 sentence description focusing on GEOMETRIC function and form",
+  "ignored_elements": ["List of branding, logos, text, decorations that were ignored"],
+  "spatial_analysis": {
+    "viewing_angle": "front" | "side" | "top" | "isometric" | "oblique" | "multiple_views",
+    "symmetry_detected": ["reflection_X", "reflection_Y", "rotational_6", "none"],
+    "depth_cues_used": ["occlusion", "shadows", "size_gradient"]
+  },
+  "geometry": {
+    "primary_shapes": [
+      {"type": "cuboid", "dims": [50, 30, 20], "position": "base", "notes": "main body", "rounding": 2}
+    ],
+    "operations": ["difference for holes", "union for boss"],
+    "features": [
+      {"type": "hole", "diameter": 5, "depth": "through", "count": 4, "pattern": "grid_copies"}
+    ]
+  },
+  "dimensions": {
+    "overall": {"length": 50, "width": 30, "height": 20, "estimated": false},
+    "features": {}
+  },
+  "bosl2_functions_needed": ["cuboid", "cyl", "difference", "grid_copies", "rounding"],
+  "confidence": "high" | "medium" | "low",
+  "ambiguities": []
+}
+\`\`\``,
+  },
 };
 
 const VLM_IMAGE_CLASSIFICATION: Record<string, PromptVersion> = {
@@ -234,6 +371,100 @@ Return a JSON array of all dimensions found:
 };
 
 // =============================================================================
+// Spatial Reasoning Primer (VLM Enhancement)
+// =============================================================================
+
+const SPATIAL_REASONING_PRIMER: Record<string, PromptVersion> = {
+  'v1.0': {
+    description: 'Spatial reasoning primer for VLM analysis enhancement',
+    created: '2026-01-17',
+    content: `# Spatial Reasoning Framework for VLM Analysis
+
+## Perspective Analysis
+
+### Vanishing Points & Foreshortening
+- Identify vanishing points to determine viewing angle
+- Correct for foreshortening when estimating dimensions
+- Objects closer to camera appear larger - compensate in measurements
+- Parallel lines converge toward vanishing points in perspective views
+
+### View Axis Identification
+- **Front view**: Shows width (X) and height (Z), depth hidden
+- **Side view**: Shows depth (Y) and height (Z), width hidden
+- **Top view**: Shows width (X) and depth (Y), height hidden
+- **Isometric**: All three axes visible at ~120° angles
+- **Oblique**: Front face square-on, depth at 45° angle
+
+## Depth Cue Analysis
+
+### Depth Cue Hierarchy (in order of reliability)
+1. **Occlusion**: Objects in front block objects behind (most reliable)
+2. **Attached shadows**: Reveal surface shape and height relationships
+3. **Cast shadows**: Indicate relative positions and heights
+4. **Size gradient**: Repeated elements appear smaller with distance
+5. **Texture gradient**: Surface detail becomes finer with distance
+6. **Atmospheric perspective**: Distant objects appear hazier (outdoor photos)
+
+### Using Shadows for Dimension Estimation
+- Shadow length relative to object height indicates sun/light angle
+- Attached shadows reveal curvature and protrusions
+- Sharp vs soft shadows indicate distance from surface
+
+## Symmetry Identification
+
+### Types of Symmetry
+- **Reflection symmetry**: Mirror image across a plane (most common in mechanical parts)
+- **Rotational symmetry**: N-fold rotation (gears, flanges, knobs)
+- **Translational symmetry**: Repeated patterns at regular intervals (arrays, grids)
+
+### Exploiting Symmetry
+- If one half is occluded, infer from visible half
+- Count visible repeating elements and extrapolate for hidden ones
+- Symmetric objects often have centered features
+
+## Manufacturing Feature Recognition
+
+### Standard Sizes (use these when dimensions not explicit)
+- M3, M4, M5, M6, M8 holes (3mm, 4mm, 5mm, 6mm, 8mm)
+- Common wall thicknesses: 1.5mm, 2mm, 3mm, 4mm, 5mm
+- Standard fillet radii: 0.5mm, 1mm, 2mm, 3mm, 5mm
+- PCB mounting hole spacing: multiples of 2.54mm or 5.08mm
+
+### Feature Types
+- **Through holes**: Complete circles, uniform diameter
+- **Countersunk holes**: Conical depression around hole
+- **Counterbored holes**: Flat-bottomed recess around hole
+- **Blind holes**: Visible bottom, darker center
+- **Slots**: Elongated cutouts, often with rounded ends
+- **Bosses**: Raised cylindrical features for mounting
+- **Ribs**: Thin reinforcing walls
+
+## Technical Drawing View Interpretation
+
+### Standard Arrangement (First Angle Projection)
+- Front view: Center
+- Top view: Above front view
+- Right side view: Right of front view
+
+### Dimension Line Reading
+- Overall dimensions at outermost position
+- Feature dimensions closer to the feature
+- Leader lines point to specific features
+- Radius marked with "R", diameter with "Ø"
+
+## Multi-View Cross-Referencing
+
+When multiple views are shown:
+1. Identify the same feature in each view
+2. Width (X) aligns between front and top views
+3. Height (Z) aligns between front and side views
+4. Depth (Y) aligns between top and side views
+5. Resolve ambiguities by finding feature in another view
+6. Check for consistency - same dimension should match across views`,
+  },
+};
+
+// =============================================================================
 // Code Generation Prompts
 // =============================================================================
 
@@ -274,6 +505,477 @@ include <BOSL2/std.scad>
 Return ONLY valid OpenSCAD code. No markdown, no explanations.
 The code should start with \`include <BOSL2/std.scad>\``,
   },
+
+  'v1.1': {
+    description: 'Enhanced code generation with image matching emphasis',
+    created: '2026-01-17',
+    content: `You are generating OpenSCAD code to recreate a 3D object. The VLM analysis provides context, but you should LOOK AT THE IMAGE to get the shape right.
+
+# VLM Analysis (Reference Only)
+{VLM_DESCRIPTION}
+
+# YOUR TASK
+Generate OpenSCAD code that VISUALLY MATCHES the object in the image as closely as possible.
+
+# Critical Guidelines
+
+## 1. Decomposition Strategy
+Complex objects need multiple components. For EACH distinct part of the object, create a separate module:
+- Main body/housing
+- Protrusions/extensions (handles, knobs, arms)
+- Holes/cutouts (mounting holes, windows, slots)
+- Surface features (ribs, textures, labels)
+
+## 2. Shape Matching Priority
+1. Get the OVERALL SILHOUETTE right first
+2. Then add MAJOR FEATURES (holes, protrusions)
+3. Finally add DETAILS (fillets, chamfers, small features)
+
+## 3. For Complex/Organic Shapes
+When the object has organic or ergonomic shapes:
+- Use \`hull()\` to create smooth transitions between shapes
+- Use \`offset()\` for rounded edges
+- Use \`minkowski()\` for uniform rounding
+- Consider using \`sphere()\` for domed/bulbous areas
+- Use \`rotate_extrude()\` for axisymmetric parts
+
+## 4. BOSL2 Essentials
+\`\`\`openscad
+include <BOSL2/std.scad>
+
+// Rounded cuboid
+cuboid([x, y, z], rounding=r, anchor=BOTTOM);
+
+// Cylinder
+cyl(h=height, d=diameter, anchor=BOTTOM);
+
+// Rounded cylinder (for knobs, handles)
+cyl(h=height, d=diameter, rounding1=r1, rounding2=r2);
+
+// Prism for tapered shapes
+prismoid(size1=[bottom_x, bottom_y], size2=[top_x, top_y], h=height);
+
+// Patterns
+xcopies(n=count, spacing=s) { ... }  // Linear array
+grid_copies([x, y], spacing=[sx, sy]) { ... }  // Grid pattern
+zrot_copies(n=count) { ... }  // Radial pattern
+\`\`\`
+
+## 5. Constraints (MUST FOLLOW)
+- Rounding values MUST be < (smallest_dimension / 2)
+- For thin features (< 5mm), use rounding=0 or very small values
+- Use $fn=64 or higher for smooth curves
+- All dimensions should be parametric (variables at top)
+
+## 6. Code Structure Template
+\`\`\`openscad
+include <BOSL2/std.scad>
+
+// === PARAMETERS ===
+main_body_length = 100;
+main_body_width = 50;
+// ... more params
+
+// === MODULE: Main Body ===
+module main_body() {
+  // Description of this part
+}
+
+// === MODULE: Handle/Extension ===
+module handle() {
+  // Description of this part
+}
+
+// === ASSEMBLY ===
+module assembly() {
+  union() {
+    main_body();
+    handle();
+  }
+}
+
+assembly();
+\`\`\`
+
+# OUTPUT
+Return ONLY valid OpenSCAD code. No markdown code blocks, no explanations.
+Start directly with: include <BOSL2/std.scad>`,
+  },
+
+  'v2.0': {
+    description:
+      'Code generation v2.0 with complete BOSL2 reference and examples',
+    created: '2026-01-17',
+    content: `You are generating OpenSCAD code to recreate a 3D object shown in an image.
+
+# VLM Analysis (Reference)
+{VLM_DESCRIPTION}
+
+# CRITICAL: YOUR PRIMARY GOAL
+Generate OpenSCAD code that **VISUALLY MATCHES** the object in the image. The VLM analysis helps, but you must LOOK AT THE IMAGE to get the shape right.
+
+# THINGS TO IGNORE (Do NOT Model)
+- Brand names, logos, text labels, product markings
+- Decorative decals, stickers, printed patterns
+- Colors and surface textures (just model the shape)
+- Items placed ON the object (accessories, contents)
+
+# BOSL2 LIBRARY REFERENCE
+
+Always start with:
+\`\`\`openscad
+include <BOSL2/std.scad>
+\`\`\`
+
+## Core BOSL2 Primitives
+
+| Instead of... | Use BOSL2... |
+|---------------|--------------|
+| cube([x,y,z]) | cuboid([x,y,z], rounding=r, anchor=BOTTOM) |
+| cylinder(h,d) | cyl(h=h, d=d, rounding=r, anchor=BOTTOM) |
+| sphere(r) | sphere(d=d) |
+| (none) | prismoid([w1,d1], [w2,d2], h=h) for tapered boxes |
+| (none) | tube(h=h, od=od, id=id) for hollow cylinders |
+
+## CRITICAL: Rounding Validation
+
+**The rounding value MUST be less than half the smallest dimension.**
+
+Formula: \`min(x, y, z) / 2 > rounding_value\`
+
+Examples:
+- cuboid([50, 30, 20], rounding=8) → OK (min=20, 20/2=10 > 8)
+- cuboid([3, 70, 32], rounding=3) → FAILS! (3/2=1.5, need rounding<1.5)
+- cuboid([3, 70, 32], rounding=1) → OK
+- cuboid([1.5, 60, 40], rounding=2) → FAILS! (1.5/2=0.75)
+- cuboid([1.5, 60, 40]) → OK (omit rounding for thin parts)
+
+**Rule: For any dimension < 5mm, omit rounding entirely or use very small values (0.3-0.5mm).**
+
+## BOSL2 Anchor System
+
+Use anchor points instead of manual translate:
+- \`anchor=BOTTOM\` - sits on Z=0 plane
+- \`anchor=CENTER\` - centered at origin
+- \`anchor=TOP+RIGHT\` - compound anchors
+- \`anchor=BOTTOM+FRONT+LEFT\` - corner positioning
+
+## Edge Specifiers for Rounding/Chamfering
+
+The \`edges=\` parameter accepts ONLY these values:
+- Axis strings: \`"X"\`, \`"Y"\`, \`"Z"\`, \`"ALL"\`, \`"NONE"\`
+- Single faces: \`TOP\`, \`BOTTOM\`, \`LEFT\`, \`RIGHT\`, \`FRONT\`, \`BACK\`
+- Compound edges: \`TOP+FRONT\`, \`BOTTOM+LEFT\`, etc.
+- Arrays: \`[TOP+FRONT, TOP+BACK, BOTTOM+FRONT, BOTTOM+BACK]\`
+- Except syntax: \`edges=BOTTOM, except=[BOTTOM+FRONT]\`
+
+Examples:
+\`\`\`openscad
+cuboid([50,30,20], rounding=3, edges="Z");           // All vertical edges
+cuboid([50,30,20], rounding=3, edges=TOP);           // All top edges
+cuboid([50,30,20], rounding=3, edges=[TOP+FRONT]);   // Single edge
+cuboid([50,30,20], rounding=3, edges=BOTTOM, except=[BOTTOM+FRONT]);
+\`\`\`
+
+**DO NOT invent edge names like "min_y", "top_edges" - these will FAIL.**
+
+## BOSL2 Distribution Functions
+
+\`\`\`openscad
+// Linear arrays
+xcopies(n=4, spacing=25) cyl(h=20, d=10);  // Along X axis
+ycopies(n=3, spacing=20) cuboid([10,10,5]); // Along Y axis
+zcopies(n=5, spacing=15) sphere(d=8);       // Along Z axis
+
+// Grid pattern
+grid_copies(spacing=20, n=[3, 3]) cyl(h=10, d=8);
+grid_copies(spacing=[25, 20], n=[4, 3]) cuboid([8,8,5]);
+
+// Circular/radial array
+zrot_copies(n=6) right(30) cyl(h=10, d=5);  // 6 items in circle
+zrot_copies(n=8, r=25) cyl(h=5, d=4);       // 8 items at radius 25
+\`\`\`
+
+## BOSL2 Transform Functions
+
+\`\`\`openscad
+up(z)    // move +Z
+down(z)  // move -Z
+left(x)  // move -X
+right(x) // move +X
+fwd(y)   // move -Y
+back(y)  // move +Y
+xrot(a)  // rotate around X axis
+yrot(a)  // rotate around Y axis
+zrot(a)  // rotate around Z axis
+\`\`\`
+
+## Valid Function Reference
+
+**USE**: cuboid(), cyl(), sphere(), prismoid(), tube(), up(), down(), left(), right(), fwd(), back(), xrot(), yrot(), zrot(), xcopies(), ycopies(), zcopies(), grid_copies(), zrot_copies(), attach(), position(), anchor=, orient=, threaded_rod(), threaded_nut()
+
+**DO NOT USE**: yc_rot(), xc_rot(), text3d(), orientation=ORIENT_X (deprecated), fill= parameter, edges="min_y"
+
+## 2D vs 3D Primitives (CRITICAL)
+
+**2D primitives MUST be extruded to create 3D geometry:**
+- circle() → 2D (use cyl() instead, or linear_extrude() circle())
+- square() → 2D (use cuboid() instead)
+- polygon() → 2D (must use linear_extrude())
+
+**WRONG:**
+\`\`\`openscad
+hull() {
+  translate([0, 5, 0]) circle(r=2);  // 2D!
+  translate([0, -5, 0]) circle(r=2); // 2D!
+}
+\`\`\`
+
+**CORRECT:**
+\`\`\`openscad
+linear_extrude(height=5)
+  hull() {
+    translate([0, 5, 0]) circle(r=2);
+    translate([0, -5, 0]) circle(r=2);
+  }
+\`\`\`
+
+**Best practice: Use BOSL2 3D primitives directly instead of extruding 2D.**
+
+# CODE STRUCTURE
+
+## Required Organization
+\`\`\`openscad
+include <BOSL2/std.scad>
+
+// ============================================================
+// PARAMETERS - All dimensions as named variables
+// ============================================================
+body_length = 80;
+body_width = 50;
+body_height = 30;
+wall_thickness = 2;
+fillet_radius = 3;  // Must be < min(dimensions)/2
+hole_diameter = 5;
+
+// Calculated values
+inner_width = body_width - wall_thickness * 2;
+
+// ============================================================
+// MODULE: Main Body - (describe which part of image)
+// ============================================================
+module main_body() {
+  cuboid([body_length, body_width, body_height],
+         rounding=fillet_radius, edges="Z",
+         anchor=BOTTOM);
+}
+
+// ============================================================
+// MODULE: Mounting Holes - (describe location in image)
+// ============================================================
+module mounting_holes() {
+  // 4 corner holes
+  grid_copies(spacing=[60, 40], n=[2, 2])
+    cyl(h=body_height+2, d=hole_diameter, anchor=CENTER);
+}
+
+// ============================================================
+// ASSEMBLY
+// ============================================================
+difference() {
+  main_body();
+  mounting_holes();
+}
+\`\`\`
+
+# COMPLETE EXAMPLES
+
+## Example 1: Parametric Enclosure with Mounting Bosses
+
+\`\`\`openscad
+include <BOSL2/std.scad>
+
+// Parameters
+box_length = 100;
+box_width = 60;
+box_height = 40;
+wall = 2;
+boss_diameter = 8;
+boss_height = 35;
+screw_hole = 3;  // M3
+corner_radius = 3;
+
+// Outer shell
+module outer_shell() {
+  cuboid([box_length, box_width, box_height],
+         rounding=corner_radius, edges="Z",
+         anchor=BOTTOM);
+}
+
+// Inner cavity
+module inner_cavity() {
+  up(wall)
+    cuboid([box_length - wall*2, box_width - wall*2, box_height],
+           rounding=corner_radius - wall/2, edges="Z",
+           anchor=BOTTOM);
+}
+
+// Mounting bosses with screw holes
+module mounting_boss() {
+  difference() {
+    cyl(h=boss_height, d=boss_diameter, anchor=BOTTOM);
+    cyl(h=boss_height+1, d=screw_hole, anchor=BOTTOM);
+  }
+}
+
+module mounting_bosses() {
+  inset = 8;
+  positions = [
+    [box_length/2 - inset, box_width/2 - inset],
+    [-box_length/2 + inset, box_width/2 - inset],
+    [box_length/2 - inset, -box_width/2 + inset],
+    [-box_length/2 + inset, -box_width/2 + inset]
+  ];
+  for (pos = positions) {
+    translate([pos[0], pos[1], wall])
+      mounting_boss();
+  }
+}
+
+// Assembly
+difference() {
+  outer_shell();
+  inner_cavity();
+}
+mounting_bosses();
+\`\`\`
+
+## Example 2: L-Bracket from Technical Drawing
+
+\`\`\`openscad
+include <BOSL2/std.scad>
+
+// Parameters from drawing
+leg_length = 50;
+leg_width = 25;
+thickness = 3;  // Thin! No rounding
+hole_diameter = 5;
+hole_inset = 10;
+hole_spacing = 30;
+
+// Vertical leg
+module vertical_leg() {
+  cuboid([leg_width, thickness, leg_length], anchor=BOTTOM+FRONT);
+}
+
+// Horizontal leg
+module horizontal_leg() {
+  cuboid([leg_width, leg_length, thickness], anchor=TOP+BACK);
+}
+
+// Mounting holes in vertical leg
+module vertical_holes() {
+  for (z = [hole_inset, hole_inset + hole_spacing])
+    translate([0, 0, z])
+      rotate([90, 0, 0])
+        cyl(h=thickness+2, d=hole_diameter, anchor=CENTER, $fn=24);
+}
+
+// Mounting holes in horizontal leg
+module horizontal_holes() {
+  for (y = [hole_inset, hole_inset + hole_spacing])
+    translate([0, y, 0])
+      cyl(h=thickness+2, d=hole_diameter, anchor=CENTER, $fn=24);
+}
+
+// Assembly
+difference() {
+  union() {
+    vertical_leg();
+    horizontal_leg();
+  }
+  vertical_holes();
+  horizontal_holes();
+}
+\`\`\`
+
+## Example 3: Cylindrical Adapter with Flange and Bolt Pattern
+
+\`\`\`openscad
+include <BOSL2/std.scad>
+
+// Parameters
+body_od = 50;
+body_id = 40;
+body_height = 60;
+flange_od = 80;
+flange_thickness = 5;
+bolt_circle_diameter = 65;
+bolt_hole_diameter = 6;
+num_bolts = 6;
+
+// Main tube body
+module tube_body() {
+  tube(h=body_height, od=body_od, id=body_id, anchor=BOTTOM);
+}
+
+// Flange at bottom
+module flange() {
+  difference() {
+    cyl(h=flange_thickness, d=flange_od, anchor=BOTTOM);
+    down(0.1) cyl(h=flange_thickness+0.2, d=body_id, anchor=BOTTOM);
+  }
+}
+
+// Bolt holes in flange
+module bolt_holes() {
+  zrot_copies(n=num_bolts, r=bolt_circle_diameter/2)
+    cyl(h=flange_thickness+2, d=bolt_hole_diameter, anchor=CENTER, $fn=24);
+}
+
+// Assembly
+difference() {
+  union() {
+    tube_body();
+    flange();
+  }
+  bolt_holes();
+}
+\`\`\`
+
+# SHAPE-SPECIFIC GUIDANCE
+
+## Enclosures/Boxes
+- Use cuboid with rounding on vertical edges (edges="Z")
+- Create shell with difference() of outer and inner cuboid
+- Add mounting bosses as separate union() elements
+- Remember: inner rounding = outer rounding - wall_thickness
+
+## Brackets
+- Often thin (2-4mm) - omit or minimize rounding
+- Use union() of perpendicular cuboids
+- Add gusset/rib for strength if visible in image
+
+## Adapters/Reducers
+- Use tube() for hollow cylindrical shapes
+- Use cyl() with d1/d2 for tapered transitions
+- Stack sections with up() positioning
+
+## Flanges
+- Flat disk: cyl(h=thickness, d=diameter)
+- Bolt pattern: zrot_copies(n=count, r=bolt_circle_radius)
+- Center hole: difference() with cyl()
+
+## Handles/Knobs
+- Use cyl() with rounding1/rounding2 for rounded ends
+- For ergonomic shapes, consider hull() of multiple spheres
+- Finger grips: zrot_copies() with small cyl() subtractions
+
+# OUTPUT FORMAT
+
+Return ONLY valid OpenSCAD code. No markdown, no explanations, no code fences.
+Start directly with: include <BOSL2/std.scad>`,
+  },
 };
 
 // =============================================================================
@@ -305,6 +1007,168 @@ const VERIFICATION_COMPARISON: Record<string, PromptVersion> = {
     "Specific fix suggestion"
   ]
 }`,
+  },
+
+  'v1.1': {
+    description: 'Geometry-focused comparison ignoring materials and colors',
+    created: '2026-01-17',
+    content: `Compare the rendered 3D model (second image) with the original reference (first image).
+
+# IMPORTANT CONTEXT
+The rendered model is an OpenSCAD preview - a simplified geometric representation. It will NOT match:
+- Colors or materials (OpenSCAD renders everything in one color)
+- Surface textures or finishes (glossy, matte, transparent, etc.)
+- Decorative items or accessories that aren't part of the core geometry
+- Realistic lighting or shadows
+- Labels, text, or branding
+
+# What TO Compare (Geometry Only)
+1. **Overall Silhouette**: Does the basic outline/shape match?
+2. **Structural Features**: Count of holes, posts, arms, legs - are they correct?
+3. **Proportions**: Are the ratios between parts approximately correct?
+4. **Feature Placement**: Are holes, protrusions, etc. in roughly the right positions?
+5. **Core Geometry**: Is the fundamental structure captured?
+
+# What to IGNORE
+- Color differences (irrelevant - OpenSCAD uses a default color)
+- Material appearance (transparent vs solid, glossy vs matte)
+- Items placed ON the object (jewelry on a stand, items in a holder)
+- Fine surface details (textures, engravings, small decorations)
+- Lighting and shadow differences
+
+# Scoring Guidelines
+- **90-100 (excellent)**: Silhouette matches, correct feature count, good proportions
+- **70-89 (good)**: Minor proportion differences, small feature placement errors
+- **50-69 (fair)**: Recognizable but wrong feature count or significant proportion issues
+- **0-49 (poor)**: Wrong overall shape, major structural differences
+
+# Output Format
+{
+  "match_quality": "excellent" | "good" | "fair" | "poor",
+  "similarity_score": 0-100,
+  "discrepancies": [
+    "ONLY list geometric/structural differences, NOT color/material/accessory differences"
+  ],
+  "recommendation": "proceed" | "minor_adjustment" | "major_revision",
+  "suggested_fixes": [
+    "Specific geometric fix - e.g., 'Add one more post' or 'Make base wider'"
+  ]
+}`,
+  },
+
+  'v2.0': {
+    description:
+      'Verification v2.0 with explicit ignore list and weighted scoring',
+    created: '2026-01-17',
+    content: `Compare the rendered 3D model (second image) with the original reference (first image).
+
+# CONTEXT
+The rendered model is an OpenSCAD geometric preview. You are comparing GEOMETRY ONLY.
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# IGNORE THESE COMPLETELY (0% weight in comparison)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+Do NOT penalize the model for differences in:
+
+## Visual Properties (Not Geometric)
+- **Colors** - OpenSCAD uses a single default color
+- **Materials** - glossy, matte, transparent, metallic appearances
+- **Textures** - surface patterns, grain, finishes
+- **Lighting** - shadows, reflections, highlights, ambient occlusion
+
+## Non-Structural Elements
+- **Brand logos and text** - company names, model numbers, labels
+- **Stickers and decals** - graphics, warning labels, certification marks
+- **Printed patterns** - 2D decorations that aren't relief/embossed
+- **Accessory items** - things placed ON the object, not part of it
+
+## Environmental
+- **Background** - different backgrounds between images
+- **Camera angle** - slight viewing angle differences
+- **Scale indicators** - rulers, coins, hands shown for scale
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# COMPARE THESE (100% of comparison)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+## 1. Overall Silhouette (40% weight)
+- Does the outer boundary shape match?
+- Is the general form correct (rectangular, cylindrical, organic)?
+- Are major proportions (length:width:height ratios) approximately correct?
+
+## 2. Structural Features (30% weight)
+- Correct NUMBER of holes, posts, arms, legs, slots?
+- Major protrusions present (handles, bosses, flanges)?
+- Major cutouts present (windows, vents, channels)?
+
+## 3. Proportions & Ratios (20% weight)
+- Are relative sizes between parts correct?
+- Is the aspect ratio roughly correct?
+- Are features sized proportionally (not too big/small)?
+
+## 4. Edge Treatment (10% weight)
+- Are rounded vs sharp edges approximately correct?
+- Are chamfers vs fillets used appropriately?
+- Is the general "crispness" vs "softness" similar?
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# SCORING GUIDELINES
+# ═══════════════════════════════════════════════════════════════════════════════
+
+## 90-100 (Excellent)
+- Silhouette clearly matches the original
+- All major features present and in correct positions
+- Proportions are close to original
+- Would be immediately recognizable as the same object
+
+## 70-89 (Good)
+- Silhouette is recognizably similar
+- Most features present, minor count/placement differences
+- Some proportion differences but overall shape is right
+- Minor adjustments would bring it to excellent
+
+## 50-69 (Fair)
+- Basic form is correct but clearly different
+- Some features missing or wrong count
+- Noticeable proportion issues
+- Recognizable but would need significant work
+
+## 30-49 (Poor)
+- Shape is fundamentally different
+- Multiple missing or incorrect features
+- Major proportion problems
+- Barely recognizable as attempt at same object
+
+## 0-29 (Wrong)
+- Completely wrong shape or form
+- Missing most structural features
+- Would not be recognized as the same object
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# OUTPUT FORMAT
+# ═══════════════════════════════════════════════════════════════════════════════
+
+Return ONLY this JSON:
+{
+  "match_quality": "excellent" | "good" | "fair" | "poor",
+  "similarity_score": 0-100,
+  "breakdown": {
+    "silhouette": {"score": 0-100, "notes": "brief note"},
+    "features": {"score": 0-100, "notes": "brief note"},
+    "proportions": {"score": 0-100, "notes": "brief note"},
+    "edges": {"score": 0-100, "notes": "brief note"}
+  },
+  "discrepancies": [
+    "ONLY geometric differences - e.g., 'Missing center hole' or 'Base too narrow'"
+  ],
+  "recommendation": "proceed" | "minor_adjustment" | "major_revision",
+  "suggested_fixes": [
+    "Specific actionable fix - e.g., 'Increase body_width from 30 to 50mm'"
+  ]
+}
+
+IMPORTANT: Do NOT mention color, material, texture, branding, or lighting in discrepancies.`,
   },
 };
 
@@ -468,6 +1332,7 @@ const PROMPT_TEMPLATES: PromptTemplates = {
   verification_detailed: VERIFICATION_DETAILED,
   error_analysis: ERROR_ANALYSIS,
   refinement_guidance: REFINEMENT_GUIDANCE,
+  spatial_reasoning_primer: SPATIAL_REASONING_PRIMER,
 };
 
 // =============================================================================

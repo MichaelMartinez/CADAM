@@ -54,8 +54,24 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
    * Main execution flow
    */
   async execute(): Promise<void> {
+    console.log('[VisionToScad] ========== EXECUTE() CALLED ==========');
+    console.log(
+      '[VisionToScad] Starting execute() for workflow:',
+      this.ctx.workflow.id,
+    );
+    console.log('[VisionToScad] STACK TRACE:', new Error().stack);
+    const state = this.getTypedState();
+    console.log('[VisionToScad] Initial state:', {
+      type: state.type,
+      original_image_ids: state.original_image_ids,
+      image_count: state.original_image_ids.length,
+      has_vlm_output: !!state.vlm_structured_output,
+      has_scad_code: !!state.scad_code,
+    });
+
     try {
       // Emit workflow started
+      console.log('[VisionToScad] Emitting workflow.started event');
       this.emit({
         type: 'workflow.started',
         workflow_id: this.ctx.workflow.id,
@@ -63,38 +79,85 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
       });
 
       // Step 1: Preprocess images
+      console.log('[VisionToScad] Step 1: Preprocessing images...');
       await this.preprocessImages();
+      console.log('[VisionToScad] Step 1 complete');
 
       // Step 2: VLM Analysis
+      console.log('[VisionToScad] Step 2: VLM Analysis...');
       const vlmOutput = await this.analyzeWithVLM();
+      console.log('[VisionToScad] Step 2 complete:', {
+        image_type: vlmOutput.image_type,
+        confidence: vlmOutput.confidence,
+        has_description: !!vlmOutput.description,
+      });
 
       // Step 3: Inflection point - Review VLM analysis
+      console.log(
+        '[VisionToScad] Step 3: VLM Review inflection point, enabled:',
+        this.inflectionPointsEnabled,
+      );
       if (this.inflectionPointsEnabled) {
         const shouldProceed = await this.presentVLMReview(vlmOutput);
+        console.log(
+          '[VisionToScad] VLM Review result, shouldProceed:',
+          shouldProceed,
+        );
         if (!shouldProceed) {
+          console.log(
+            '[VisionToScad] Workflow paused at VLM review inflection point',
+          );
           return; // Workflow paused at inflection point
         }
       }
 
       // Step 4: Generate OpenSCAD code
+      console.log('[VisionToScad] Step 4: Generating OpenSCAD code...');
       const scadCode = await this.generateScadCode(vlmOutput);
+      console.log(
+        '[VisionToScad] Step 4 complete, code length:',
+        scadCode.length,
+      );
 
       // Step 5: Inflection point - Review generated code
+      console.log(
+        '[VisionToScad] Step 5: Code Review inflection point, enabled:',
+        this.inflectionPointsEnabled,
+      );
       if (this.inflectionPointsEnabled) {
         const shouldProceed = await this.presentCodeReview(scadCode);
+        console.log(
+          '[VisionToScad] Code Review result, shouldProceed:',
+          shouldProceed,
+        );
         if (!shouldProceed) {
+          console.log(
+            '[VisionToScad] Workflow paused at code review inflection point',
+          );
           return; // Workflow paused at inflection point
         }
       }
 
       // Step 6: Optional verification loop
+      console.log(
+        '[VisionToScad] Step 6: Verification loop, enabled:',
+        this.verificationEnabled,
+      );
       if (this.verificationEnabled) {
         await this.runVerificationLoop(scadCode);
+        console.log('[VisionToScad] Step 6 complete');
       }
 
       // Complete workflow
+      console.log('[VisionToScad] Completing workflow...');
       await this.completeWorkflow();
+      console.log('[VisionToScad] Workflow completed successfully');
     } catch (error) {
+      console.error('[VisionToScad] Execute error:', error);
+      console.error(
+        '[VisionToScad] Error stack:',
+        error instanceof Error ? error.stack : 'No stack',
+      );
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       await this.failWorkflow(errorMessage, true, [
@@ -112,6 +175,13 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
     userChoice: string,
     userFeedback?: string,
   ): Promise<void> {
+    console.log('[VisionToScad] ========== RESUME_FROM() CALLED ==========');
+    console.log('[VisionToScad] resumeFrom called with:', {
+      stepName,
+      userChoice,
+      userFeedback,
+      workflowId: this.ctx.workflow.id,
+    });
     try {
       switch (stepName) {
         case 'vlm_review': {
@@ -128,9 +198,28 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
         }
         case 'verification': {
           // Resume verification after receiving screenshot from frontend
+          console.log(
+            '[VisionToScad:resumeFrom:verification] Resuming verification step',
+            {
+              userChoice,
+              userFeedback,
+            },
+          );
           if (userChoice === 'screenshot_provided') {
             const state = this.getTypedState();
+            console.log(
+              '[VisionToScad:resumeFrom:verification] Screenshot provided, state:',
+              {
+                render_image_ids: state.render_image_ids,
+                scad_code_length: state.scad_code?.length,
+              },
+            );
             await this.runVerificationLoop(state.scad_code!);
+          } else {
+            console.log(
+              '[VisionToScad:resumeFrom:verification] Unknown userChoice:',
+              userChoice,
+            );
           }
           break;
         }
@@ -231,6 +320,7 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
   // ---------------------------------------------------------------------------
 
   private async analyzeWithVLM(): Promise<VLMStructuredOutput> {
+    console.log('[VisionToScad:analyzeWithVLM] Starting VLM analysis');
     const state = this.getTypedState();
     const modelConfig = this.getConfig('models');
     const promptConfig = this.getConfig('prompts');
@@ -239,18 +329,38 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
     const visionModel =
       modelConfig.vision || getModelForTier(modelConfig.tier, 'vision');
 
+    console.log('[VisionToScad:analyzeWithVLM] Config:', {
+      imageIds,
+      imageCount: imageIds.length,
+      visionModel,
+      modelTier: modelConfig.tier,
+      promptVersion: promptConfig.version,
+    });
+
     const step = await this.startStep('vlm_analysis', 'ai_call', {
       image_ids: imageIds,
       model: visionModel,
     });
+    console.log('[VisionToScad:analyzeWithVLM] Step created:', step.id);
 
     try {
       this.emitProgress(10, 'Preparing VLM prompt...');
 
-      // Get the grounding prompt
+      // Get the grounding prompt - use v2.0 by default for better spatial reasoning
+      const promptVersion = promptConfig.version || 'v2.0';
       const prompt = getPromptTemplate('vlm_openscad_grounding', {
-        version: promptConfig.version,
+        version: promptVersion,
       });
+
+      // Prepend spatial reasoning primer for enhanced VLM analysis
+      const spatialPrimer = getPromptTemplate('spatial_reasoning_primer', {
+        version: 'v1.0',
+      });
+      const enhancedPrompt = spatialPrimer + '\n\n---\n\n' + prompt;
+      console.log(
+        '[VisionToScad:analyzeWithVLM] Prompt loaded with spatial primer, length:',
+        enhancedPrompt.length,
+      );
 
       this.emitProgress(20, 'Fetching images...');
 
@@ -258,6 +368,7 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
       const imageDataUrls: string[] = [];
       for (let i = 0; i < imageIds.length; i++) {
         const imageId = imageIds[i];
+        console.log('[VisionToScad:analyzeWithVLM] Fetching image:', imageId);
         this.emitProgress(
           20 + (i / imageIds.length) * 20,
           `Processing image ${i + 1} of ${imageIds.length}...`,
@@ -265,9 +376,20 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
 
         try {
           const dataUrl = await this.imagePreprocessor.toDataUrl(imageId);
+          console.log(
+            '[VisionToScad:analyzeWithVLM] Image fetched, dataUrl length:',
+            dataUrl.length,
+          );
           imageDataUrls.push(dataUrl);
         } catch (err) {
-          console.error(`Failed to fetch image ${imageId}:`, err);
+          console.error(
+            '[VisionToScad:analyzeWithVLM] Failed to fetch image:',
+            {
+              imageId,
+              error: err instanceof Error ? err.message : String(err),
+              stack: err instanceof Error ? err.stack : 'No stack',
+            },
+          );
           throw new Error(
             `Failed to fetch image: ${err instanceof Error ? err.message : String(err)}`,
           );
@@ -277,17 +399,39 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
       this.emitProgress(50, 'Analyzing images with vision model...');
 
       // Call OpenRouter API with vision model
+      console.log('[VisionToScad:analyzeWithVLM] Calling OpenRouter API:', {
+        model: visionModel,
+        imageCount: imageDataUrls.length,
+        promptLength: prompt.length,
+      });
+
       const result = await this.openRouter.analyzeImages(
         visionModel,
         imageDataUrls,
-        prompt,
+        enhancedPrompt,
         {
-          systemPrompt:
-            'You are an expert CAD engineer. Return ONLY valid JSON matching the schema described in the prompt. Do not include any markdown formatting or code blocks.',
+          systemPrompt: `You are an expert CAD engineer with advanced spatial reasoning capabilities. Your task is to analyze images for 3D CAD modeling using OpenSCAD with the BOSL2 library.
+
+CRITICAL INSTRUCTIONS:
+1. Use your spatial reasoning skills to correctly interpret perspective, depth cues, and symmetry
+2. IGNORE all branding, logos, text, decals - focus ONLY on geometric shape
+3. Extract or estimate ALL dimensions in millimeters (mm)
+4. Validate any rounding values: rounding MUST be < min(x,y,z)/2
+5. Map visual shapes to BOSL2 primitives (cuboid, cyl, prismoid, etc.)
+
+Return ONLY valid JSON matching the schema described in the prompt. Do not include any markdown formatting or code blocks.`,
           maxTokens: 4096,
           jsonMode: true,
         },
       );
+
+      console.log('[VisionToScad:analyzeWithVLM] OpenRouter response:', {
+        model: result.model,
+        tokensUsed: result.tokensUsed,
+        finishReason: result.finishReason,
+        contentLength: result.content.length,
+        contentPreview: result.content.slice(0, 200),
+      });
 
       this.emitProgress(80, 'Processing VLM response...');
 
@@ -427,21 +571,52 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
     userChoice: string,
     _userFeedback?: string,
   ): Promise<void> {
+    console.log('[VisionToScad:handleVLMReviewChoice] Called with:', {
+      userChoice,
+      workflowId: this.ctx.workflow.id,
+    });
     const state = this.getTypedState();
 
     switch (userChoice) {
       case 'proceed': {
+        console.log(
+          '[VisionToScad:handleVLMReviewChoice] proceed: Starting code generation',
+        );
         // Continue with code generation
         const scadCode = await this.generateScadCode(
           state.vlm_structured_output!,
         );
+        console.log(
+          '[VisionToScad:handleVLMReviewChoice] proceed: Code generated, checking inflection points',
+        );
         if (this.inflectionPointsEnabled) {
+          console.log(
+            '[VisionToScad:handleVLMReviewChoice] proceed: Presenting code review',
+          );
           const shouldProceed = await this.presentCodeReview(scadCode);
-          if (!shouldProceed) return;
+          console.log(
+            '[VisionToScad:handleVLMReviewChoice] proceed: presentCodeReview returned:',
+            shouldProceed,
+          );
+          if (!shouldProceed) {
+            console.log(
+              '[VisionToScad:handleVLMReviewChoice] proceed: Returning early (paused at code review)',
+            );
+            return;
+          }
         }
+        console.log(
+          '[VisionToScad:handleVLMReviewChoice] proceed: Checking verification',
+        );
         if (this.verificationEnabled) {
+          console.log(
+            '[VisionToScad:handleVLMReviewChoice] proceed: Running verification loop',
+          );
           await this.runVerificationLoop(scadCode);
         }
+        console.log(
+          '[VisionToScad:handleVLMReviewChoice] proceed: Completing workflow',
+        );
         await this.completeWorkflow();
         break;
       }
@@ -483,40 +658,146 @@ export class VisionToScadPipeline extends WorkflowPipeline<VisionToScadState> {
   private async generateScadCode(
     vlmOutput: VLMStructuredOutput,
   ): Promise<string> {
+    console.log('[VisionToScad:generateScadCode] Starting code generation');
+    const state = this.getTypedState();
     const modelConfig = this.getConfig('models');
     const promptConfig = this.getConfig('prompts');
 
-    // Prefer thinking models for code generation
+    // Use vision-capable model for code generation so it can see the original image
+    // This is critical - the one-shot chat works better because the model sees the image
     const codeModel =
       modelConfig.code_generation ||
-      getModelForTier(modelConfig.tier, 'thinking');
+      getModelForTier(modelConfig.tier, 'vision'); // Use vision model to see images
+
+    console.log('[VisionToScad:generateScadCode] Config:', {
+      codeModel,
+      modelTier: modelConfig.tier,
+      promptVersion: promptConfig.version,
+      vlmImageType: vlmOutput.image_type,
+      vlmConfidence: vlmOutput.confidence,
+      imageIds: state.original_image_ids,
+    });
 
     const step = await this.startStep('code_generation', 'ai_call', {
       vlm_output: vlmOutput,
       model: codeModel,
+      image_ids: state.original_image_ids, // Log that we're using images
     });
+    console.log('[VisionToScad:generateScadCode] Step created:', step.id);
 
     try {
-      this.emitProgress(10, 'Preparing code generation prompt...');
+      this.emitProgress(10, 'Preparing code generation with image...');
 
-      // Get the code generation prompt with VLM description
+      // Get the code generation prompt with VLM description - use v2.0 by default
+      const promptVersion = promptConfig.version || 'v2.0';
       const prompt = getPromptTemplate('scad_from_description', {
-        version: promptConfig.version,
+        version: promptVersion,
         substitutions: {
           VLM_DESCRIPTION: JSON.stringify(vlmOutput, null, 2),
         },
       });
+      console.log(
+        '[VisionToScad:generateScadCode] Prompt loaded (v' +
+          promptVersion +
+          '), length:',
+        prompt.length,
+      );
 
-      this.emitProgress(30, 'Generating OpenSCAD code...');
+      this.emitProgress(20, 'Fetching original image for code generation...');
 
-      // Call OpenRouter API with code model
-      const result = await this.openRouter.generateText(codeModel, prompt, {
-        systemPrompt: `You are an expert OpenSCAD programmer. Generate only valid OpenSCAD code using the BOSL2 library.
+      // CRITICAL: Include the original image in code generation
+      // This is why one-shot chat works better - the model can SEE the image
+      const imageIds = state.enhanced_image_ids || state.original_image_ids;
+      const imageDataUrls: string[] = [];
+      for (const imageId of imageIds) {
+        try {
+          const dataUrl = await this.imagePreprocessor.toDataUrl(imageId);
+          imageDataUrls.push(dataUrl);
+          console.log(
+            '[VisionToScad:generateScadCode] Fetched image:',
+            imageId,
+            'length:',
+            dataUrl.length,
+          );
+        } catch (err) {
+          console.error(
+            '[VisionToScad:generateScadCode] Failed to fetch image:',
+            imageId,
+            err,
+          );
+          // Continue without the image if it fails
+        }
+      }
+
+      this.emitProgress(40, 'Generating OpenSCAD code with vision...');
+
+      // Call OpenRouter API with vision model so it can see the original image
+      console.log(
+        '[VisionToScad:generateScadCode] Calling OpenRouter API with images:',
+        {
+          model: codeModel,
+          promptLength: prompt.length,
+          imageCount: imageDataUrls.length,
+        },
+      );
+
+      // Use analyzeImages if we have images, otherwise fall back to text generation
+      let result;
+      if (imageDataUrls.length > 0) {
+        result = await this.openRouter.analyzeImages(
+          codeModel,
+          imageDataUrls,
+          prompt,
+          {
+            systemPrompt: `You are an expert OpenSCAD programmer. Your PRIMARY GOAL is to generate code that VISUALLY MATCHES the object in the image.
+
+CRITICAL PRIORITIES (in order):
+1. Get the OVERALL SILHOUETTE correct - the basic shape outline
+2. Match STRUCTURAL FEATURES - holes, posts, protrusions, cutouts
+3. Maintain PROPORTIONS - relative sizes between parts
+4. Add EDGE TREATMENT - fillets, chamfers as visible
+
+MUST IGNORE:
+- Brand names, logos, text labels, product markings
+- Decorative decals, stickers, printed patterns
+- Colors and textures (just model the shape)
+- Items placed ON the object (accessories, contents)
+
+BOSL2 RULES:
+1. Start with 'include <BOSL2/std.scad>'
+2. VALIDATE ROUNDING: rounding MUST be < min(x,y,z)/2
+3. For thin parts (<5mm), omit rounding entirely
+4. Use parametric design with variables at the top
+5. One module per major component with descriptive names
+6. Use BOSL2 primitives: cuboid(), cyl(), prismoid(), tube()
+7. Use BOSL2 positioning: anchor=BOTTOM, up(), right(), etc.
+8. Use BOSL2 patterns: xcopies(), grid_copies(), zrot_copies()
+
+OUTPUT: Pure OpenSCAD code only. No markdown, no code blocks, no explanations.`,
+            maxTokens: 8192,
+            temperature: 0.3,
+          },
+        );
+      } else {
+        // Fallback to text-only generation if no images available
+        console.log(
+          '[VisionToScad:generateScadCode] No images available, falling back to text-only',
+        );
+        result = await this.openRouter.generateText(codeModel, prompt, {
+          systemPrompt: `You are an expert OpenSCAD programmer. Generate only valid OpenSCAD code using the BOSL2 library.
 Do not include any markdown formatting, explanations, or code block markers.
 Start directly with 'include <BOSL2/std.scad>' and write clean, well-commented OpenSCAD code.
 Use parametric design with variables at the top for all dimensions.`,
-        maxTokens: 8192,
-        temperature: 0.3, // Lower temperature for more deterministic code output
+          maxTokens: 8192,
+          temperature: 0.3,
+        });
+      }
+
+      console.log('[VisionToScad:generateScadCode] OpenRouter response:', {
+        model: result.model,
+        tokensUsed: result.tokensUsed,
+        finishReason: result.finishReason,
+        contentLength: result.content.length,
       });
 
       this.emitProgress(80, 'Processing generated code...');
@@ -652,13 +933,34 @@ ${scadCode}`;
   ): Promise<void> {
     const state = this.getTypedState();
 
+    console.log('[VisionToScad:handleCodeReviewChoice] Processing choice:', {
+      userChoice,
+      verificationEnabled: this.verificationEnabled,
+    });
+
     switch (userChoice) {
       case 'proceed': {
-        await this.completeWorkflow();
+        // When verification is enabled, always run verification before completing
+        // This ensures the model is compared with the original image
+        if (this.verificationEnabled) {
+          console.log(
+            '[VisionToScad:handleCodeReviewChoice] Verification enabled, running verification loop before completing',
+          );
+          await this.runVerificationLoop(state.scad_code!);
+          // Note: runVerificationLoop will either complete the workflow or present verification review
+        } else {
+          console.log(
+            '[VisionToScad:handleCodeReviewChoice] Verification disabled, completing workflow',
+          );
+          await this.completeWorkflow();
+        }
         break;
       }
 
       case 'verify': {
+        console.log(
+          '[VisionToScad:handleCodeReviewChoice] Explicit verify request, running verification loop',
+        );
         await this.runVerificationLoop(state.scad_code!);
         break;
       }
@@ -695,16 +997,28 @@ ${scadCode}`;
   // ---------------------------------------------------------------------------
 
   private async runVerificationLoop(scadCode: string): Promise<void> {
+    console.log(
+      '[VisionToScad:runVerificationLoop] Starting verification loop',
+    );
     const state = this.getTypedState();
     const verificationConfig = this.getConfig('verification');
     const modelConfig = this.getConfig('models');
     const maxIterations = verificationConfig?.max_iterations || 3;
+
+    console.log('[VisionToScad:runVerificationLoop] State:', {
+      render_image_ids: state.render_image_ids,
+      verification_attempts: state.verification_attempts,
+      maxIterations,
+      verificationConfig,
+    });
 
     const step = await this.startStep('verification', 'verification', {
       scad_code: scadCode,
       iteration: state.verification_attempts + 1,
       max_iterations: maxIterations,
     });
+
+    console.log('[VisionToScad:runVerificationLoop] Step created:', step.id);
 
     try {
       this.emitProgress(10, 'Preparing for verification...');
@@ -715,26 +1029,48 @@ ${scadCode}`;
       const renderImageId =
         state.render_image_ids?.[state.render_image_ids.length - 1];
 
+      console.log('[VisionToScad:runVerificationLoop] Render image check:', {
+        renderImageId,
+        render_image_ids: state.render_image_ids,
+        hasRenderImage: !!renderImageId,
+      });
+
       if (!renderImageId) {
         // No render image available - request screenshot from frontend
+        console.log(
+          '[VisionToScad:runVerificationLoop] No render image, requesting screenshot...',
+        );
         this.emitProgress(20, 'Requesting screenshot from 3D viewer...');
 
         // Emit screenshot request event for the frontend to capture
-        this.emit({
-          type: 'workflow.screenshot_requested',
+        const screenshotRequestEvent = {
+          type: 'workflow.screenshot_requested' as const,
           workflow_id: this.ctx.workflow.id,
           step_id: step.id,
-          purpose: 'verification',
+          purpose: 'verification' as const,
           scad_code: scadCode,
-        });
+        };
+        console.log(
+          '[VisionToScad:runVerificationLoop] Emitting screenshot request:',
+          screenshotRequestEvent,
+        );
+        this.emit(screenshotRequestEvent);
 
         // Pause workflow - will be resumed when screenshot is provided via provide_screenshot action
         await this.updateWorkflowStatus('awaiting_decision');
+        console.log(
+          '[VisionToScad:runVerificationLoop] Workflow paused, waiting for screenshot',
+        );
         this.emitProgress(25, 'Waiting for screenshot capture...');
 
         // Don't complete the step yet - it will be completed when we resume with the screenshot
         return;
       }
+
+      console.log(
+        '[VisionToScad:runVerificationLoop] Have render image, proceeding with comparison:',
+        renderImageId,
+      );
 
       this.emitProgress(30, 'Fetching images for comparison...');
 
@@ -755,8 +1091,12 @@ ${scadCode}`;
 
       this.emitProgress(50, 'Comparing original with rendered model...');
 
-      // Get the comparison prompt
-      const prompt = getPromptTemplate('verification_comparison', {});
+      // Get the comparison prompt - use v2.0 by default for better geometry-focused comparison
+      const promptConfig = this.getConfig('prompts');
+      const promptVersion = promptConfig.version || 'v2.0';
+      const prompt = getPromptTemplate('verification_comparison', {
+        version: promptVersion,
+      });
 
       // Get vision model for comparison
       const visionModel =
@@ -769,8 +1109,25 @@ ${scadCode}`;
         renderDataUrl,
         prompt,
         {
-          systemPrompt:
-            'You are comparing an original reference image (first) with a 3D rendered model (second). Return ONLY valid JSON matching the schema in the prompt.',
+          systemPrompt: `You are comparing an original reference image (first) with a 3D rendered OpenSCAD model (second).
+
+CRITICAL: Compare GEOMETRY ONLY.
+
+COMPLETELY IGNORE:
+- Colors (OpenSCAD uses one color)
+- Materials, textures, finishes
+- Brand logos, text, labels, stickers
+- Lighting, shadows, reflections
+- Items placed ON the object
+- Background differences
+
+COMPARE ONLY:
+- Overall silhouette shape (40% weight)
+- Structural features count/placement (30% weight)
+- Proportions and ratios (20% weight)
+- Edge treatment (10% weight)
+
+Return ONLY valid JSON matching the schema in the prompt. Do NOT mention color, material, branding, or lighting in discrepancies.`,
           maxTokens: 2048,
           jsonMode: true,
         },
@@ -862,42 +1219,89 @@ ${scadCode}`;
       verification_result: verificationResult,
     });
 
-    const options: InflectionPointOption[] = [
-      {
+    // Determine if the match is too poor to accept
+    const similarityScore = verificationResult.similarity_score ?? 50;
+    const isPoorMatch =
+      verificationResult.match_quality === 'poor' ||
+      similarityScore < 30 ||
+      verificationResult.recommendation === 'major_revision';
+
+    const isFairMatch =
+      verificationResult.match_quality === 'fair' ||
+      (similarityScore >= 30 && similarityScore < 60);
+
+    // Build options based on match quality
+    const options: InflectionPointOption[] = [];
+
+    // Only show Accept as primary if match is good
+    if (!isPoorMatch) {
+      options.push({
         id: 'accept',
         label: 'Accept',
-        description: `Match quality: ${verificationResult.match_quality} (${verificationResult.similarity_score}%)`,
+        description: `Match quality: ${verificationResult.match_quality} (${similarityScore}%)`,
         icon: 'proceed',
         action: { type: 'proceed_with_code', code: scadCode },
         variant:
           verificationResult.recommendation === 'proceed'
             ? 'primary'
             : 'outline',
-      },
-      {
-        id: 'improve',
-        label: 'Improve',
-        description: 'Try to fix the discrepancies',
-        icon: 'retry',
-        action: { type: 'modify', requires_feedback: false },
-        variant:
-          verificationResult.recommendation !== 'proceed'
-            ? 'primary'
-            : 'outline',
-      },
-      {
-        id: 'feedback',
-        label: 'Give Feedback',
-        description: 'Provide specific instructions',
-        icon: 'edit',
-        action: { type: 'modify', requires_feedback: true },
-        variant: 'outline',
-      },
-    ];
+      });
+    }
+
+    // Improve is primary when match is poor/fair
+    options.push({
+      id: 'improve',
+      label: 'Improve',
+      description: 'Regenerate code with better guidance',
+      icon: 'retry',
+      action: { type: 'modify', requires_feedback: false },
+      variant: isPoorMatch || isFairMatch ? 'primary' : 'outline',
+    });
+
+    options.push({
+      id: 'feedback',
+      label: 'Give Feedback',
+      description: 'Provide specific instructions',
+      icon: 'edit',
+      action: { type: 'modify', requires_feedback: true },
+      variant: 'outline',
+    });
+
+    // For poor matches, add Accept as a secondary option with a warning
+    if (isPoorMatch) {
+      options.push({
+        id: 'accept',
+        label: 'Accept Anyway',
+        description: `⚠️ Match is poor (${similarityScore}%) - not recommended`,
+        icon: 'proceed',
+        action: { type: 'proceed_with_code', code: scadCode },
+        variant: 'destructive',
+      });
+    }
+
+    // Build description based on match quality
+    let description: string;
+    if (isPoorMatch) {
+      description = `⚠️ **Poor Match Detected** - The generated model does NOT match your original image well (${similarityScore}% similarity).
+
+**Discrepancies found:**
+${verificationResult.discrepancies
+  .slice(0, 3)
+  .map((d) => `• ${d}`)
+  .join('\n')}
+
+**Recommendation:** Click "Improve" to regenerate with better guidance.`;
+    } else if (isFairMatch) {
+      description = `The generated model partially matches your original image (${similarityScore}% similarity). Some adjustments may be needed.`;
+    } else {
+      description = `The generated model matches your original image well (${similarityScore}% similarity).`;
+    }
 
     const request: InflectionPointRequest = {
-      title: 'Verification Results',
-      description: `The generated model has been compared with your original image. Match quality: ${verificationResult.match_quality}`,
+      title: isPoorMatch
+        ? '⚠️ Poor Match - Review Required'
+        : 'Verification Results',
+      description,
       context: {
         comparison: {
           before: {
@@ -920,7 +1324,7 @@ ${scadCode}`;
 
   private async handleVerificationReviewChoice(
     userChoice: string,
-    _userFeedback?: string,
+    userFeedback?: string,
   ): Promise<void> {
     const state = this.getTypedState();
 
@@ -932,9 +1336,31 @@ ${scadCode}`;
 
       case 'improve': {
         // Auto-improve based on verification discrepancies
-        // TODO: Use error_analysis prompt to fix issues
-        const improvedCode = await this.generateScadCode(
-          state.vlm_structured_output!,
+        // Augment the VLM output with the discrepancies so the model knows what to fix
+        const augmentedVlmOutput = {
+          ...state.vlm_structured_output!,
+          // Add verification feedback to guide the regeneration
+          _improvement_context: {
+            previous_attempt_issues:
+              state.verification_result?.discrepancies || [],
+            suggested_fixes:
+              (state.verification_result as { suggested_fixes?: string[] })
+                ?.suggested_fixes || [],
+            match_quality: state.verification_result?.match_quality,
+            similarity_score: state.verification_result?.similarity_score,
+          },
+        };
+        console.log(
+          '[VisionToScad:handleVerificationReviewChoice] Improving with context:',
+          {
+            discrepancies:
+              state.verification_result?.discrepancies?.length || 0,
+            match_quality: state.verification_result?.match_quality,
+          },
+        );
+        const improvedCode = await this.generateScadCodeWithFeedback(
+          augmentedVlmOutput,
+          state.verification_result?.discrepancies || [],
         );
         await this.runVerificationLoop(improvedCode);
         break;
@@ -942,16 +1368,185 @@ ${scadCode}`;
 
       case 'feedback': {
         // Use user feedback to guide improvement
-        // TODO: Use refinement_guidance prompt with feedback
-        const feedbackCode = await this.generateScadCode(
-          state.vlm_structured_output!,
-        );
-        await this.runVerificationLoop(feedbackCode);
+        if (userFeedback) {
+          const augmentedVlmOutput = {
+            ...state.vlm_structured_output!,
+            _improvement_context: {
+              user_feedback: userFeedback,
+              previous_attempt_issues:
+                state.verification_result?.discrepancies || [],
+            },
+          };
+          const feedbackCode = await this.generateScadCodeWithFeedback(
+            augmentedVlmOutput,
+            state.verification_result?.discrepancies || [],
+            userFeedback,
+          );
+          await this.runVerificationLoop(feedbackCode);
+        } else {
+          // No feedback provided, just regenerate
+          const feedbackCode = await this.generateScadCode(
+            state.vlm_structured_output!,
+          );
+          await this.runVerificationLoop(feedbackCode);
+        }
         break;
       }
 
       default:
         throw new Error(`Unknown choice: ${userChoice}`);
+    }
+  }
+
+  /**
+   * Generate improved SCAD code incorporating verification feedback
+   */
+  private async generateScadCodeWithFeedback(
+    vlmOutput: VLMStructuredOutput,
+    discrepancies: string[],
+    userFeedback?: string,
+  ): Promise<string> {
+    console.log(
+      '[VisionToScad:generateScadCodeWithFeedback] Starting with feedback',
+    );
+    const state = this.getTypedState();
+    const modelConfig = this.getConfig('models');
+    const promptConfig = this.getConfig('prompts');
+
+    const codeModel =
+      modelConfig.code_generation ||
+      getModelForTier(modelConfig.tier, 'vision');
+
+    const step = await this.startStep('code_generation', 'ai_call', {
+      vlm_output: vlmOutput,
+      model: codeModel,
+      has_feedback: true,
+      discrepancy_count: discrepancies.length,
+    });
+
+    try {
+      this.emitProgress(10, 'Preparing improved code generation...');
+
+      // Build a feedback-augmented prompt
+      let feedbackSection = '';
+      if (discrepancies.length > 0) {
+        feedbackSection += `\n\n# PREVIOUS ATTEMPT ISSUES (FIX THESE)\nThe previous attempt had these problems:\n${discrepancies.map((d) => `- ${d}`).join('\n')}\n`;
+      }
+      if (userFeedback) {
+        feedbackSection += `\n\n# USER FEEDBACK\n${userFeedback}\n`;
+      }
+
+      // Use v2.0 by default for better BOSL2 guidance
+      const promptVersion = promptConfig.version || 'v2.0';
+      const prompt = getPromptTemplate('scad_from_description', {
+        version: promptVersion,
+        substitutions: {
+          VLM_DESCRIPTION: JSON.stringify(vlmOutput, null, 2) + feedbackSection,
+        },
+      });
+
+      this.emitProgress(20, 'Fetching images...');
+
+      // Fetch images for vision-based generation
+      const imageIds = state.enhanced_image_ids || state.original_image_ids;
+      const imageDataUrls: string[] = [];
+      for (const imageId of imageIds) {
+        try {
+          const dataUrl = await this.imagePreprocessor.toDataUrl(imageId);
+          imageDataUrls.push(dataUrl);
+        } catch (err) {
+          console.error(
+            '[VisionToScad:generateScadCodeWithFeedback] Failed to fetch image:',
+            imageId,
+            err,
+          );
+        }
+      }
+
+      this.emitProgress(40, 'Regenerating code with improvements...');
+
+      const systemPrompt = `You are an expert OpenSCAD programmer. Your task is to generate OpenSCAD code that ACCURATELY RECREATES the object shown in the image.
+
+CRITICAL: Your previous attempt had issues that need to be fixed. Pay close attention to the feedback below and make sure the new code addresses those problems.
+
+${discrepancies.length > 0 ? `\n## ISSUES TO FIX:\n${discrepancies.map((d) => `- ${d}`).join('\n')}\n` : ''}
+${userFeedback ? `\n## USER'S SPECIFIC REQUEST:\n${userFeedback}\n` : ''}
+
+Rules:
+1. Use ONLY the BOSL2 library - start with 'include <BOSL2/std.scad>'
+2. Focus on getting the OVERALL SHAPE correct first
+3. Break down complex objects into separate modules
+4. Do NOT include any markdown formatting or code blocks - output pure OpenSCAD code only`;
+
+      let result;
+      if (imageDataUrls.length > 0) {
+        result = await this.openRouter.analyzeImages(
+          codeModel,
+          imageDataUrls,
+          prompt,
+          {
+            systemPrompt,
+            maxTokens: 8192,
+            temperature: 0.4, // Slightly higher for more variation
+          },
+        );
+      } else {
+        result = await this.openRouter.generateText(codeModel, prompt, {
+          systemPrompt,
+          maxTokens: 8192,
+          temperature: 0.4,
+        });
+      }
+
+      this.emitProgress(80, 'Processing improved code...');
+
+      // Clean up the response
+      let scadCode = result.content.trim();
+      if (scadCode.startsWith('```openscad')) {
+        scadCode = scadCode.slice(11);
+      } else if (scadCode.startsWith('```scad')) {
+        scadCode = scadCode.slice(7);
+      } else if (scadCode.startsWith('```')) {
+        scadCode = scadCode.slice(3);
+      }
+      if (scadCode.endsWith('```')) {
+        scadCode = scadCode.slice(0, -3);
+      }
+      scadCode = scadCode.trim();
+
+      if (!scadCode.includes('include <BOSL2/std.scad>')) {
+        scadCode = 'include <BOSL2/std.scad>\n\n' + scadCode;
+      }
+
+      if (!scadCode.includes('Generated by CADAM')) {
+        scadCode = `// Generated by CADAM Vision-to-SCAD Pipeline (Improved)
+// Based on: ${vlmOutput.description?.slice(0, 100) || 'Image analysis'}
+// Model: ${result.model}
+// Iteration: ${(state.verification_attempts || 0) + 1}
+
+${scadCode}`;
+      }
+
+      await this.updateState({
+        scad_code: scadCode,
+      });
+
+      await this.completeStep(
+        step,
+        { scad_code: scadCode },
+        {
+          modelUsed: result.model,
+          promptVersion: promptConfig.version,
+          tokensUsed: result.tokensUsed,
+        },
+      );
+
+      return scadCode;
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      await this.failStep(step, errorMessage);
+      throw error;
     }
   }
 }
