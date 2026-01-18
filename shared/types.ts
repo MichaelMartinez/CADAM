@@ -1,4 +1,6 @@
 import { Database } from './database.ts';
+import type { WorkflowType } from './workflowTypes.ts';
+
 export type Model = string;
 export type OutputMode = 'printable' | 'assembly';
 
@@ -59,6 +61,8 @@ export type Content = {
   toolCalls?: ToolCall[];
   thinking?: boolean;
   outputMode?: OutputMode;
+  // Workflow mode: triggers a specific workflow instead of standard chat
+  workflowMode?: WorkflowType;
   // Compilation events for OpenSCAD streaming progress (persisted for history)
   compilationEvents?: CompilationEvent[];
 };
