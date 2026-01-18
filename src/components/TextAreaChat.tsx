@@ -37,6 +37,13 @@ import { useItemSelection } from '@/hooks/useItemSelection';
 import { AnimatePresence, motion } from 'framer-motion';
 import { processSTL, isValidSTL } from '@/utils/meshUtils';
 import { MeshFilesContext } from '@/contexts/MeshFilesContext';
+import { WorkflowModeSelector } from './workflow/WorkflowModeSelector';
+import {
+  WorkflowMode,
+  isWorkflowMode,
+  getWorkflowDefinition,
+} from '@/lib/workflowRegistry';
+import { workflowLogger } from '@/lib/logger';
 
 interface TextAreaChatProps {
   onSubmit: (content: Content) => void;
@@ -46,6 +53,8 @@ interface TextAreaChatProps {
   setModel: (model: Model) => void;
   conversation: Pick<Conversation, 'id' | 'user_id'>;
   showPromptGenerator?: boolean;
+  workflowMode?: WorkflowMode;
+  onWorkflowModeChange?: (mode: WorkflowMode) => void;
 }
 
 const VALID_IMAGE_FORMATS = [
@@ -63,6 +72,8 @@ function TextAreaChat({
   setModel,
   conversation,
   showPromptGenerator = false,
+  workflowMode: externalWorkflowMode,
+  onWorkflowModeChange,
 }: TextAreaChatProps) {
   const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -87,6 +98,15 @@ function TextAreaChat({
 
   // Output mode: 'printable' (manifold, watertight) or 'assembly' (multi-part visualization)
   const [outputMode, setOutputMode] = useState<OutputMode>('printable');
+
+  // Workflow mode: 'chat' or a workflow type
+  const [internalWorkflowMode, setInternalWorkflowMode] =
+    useState<WorkflowMode>('chat');
+  const workflowMode = externalWorkflowMode ?? internalWorkflowMode;
+  const setWorkflowMode = onWorkflowModeChange ?? setInternalWorkflowMode;
+
+  // Track if we just submitted to prevent auto-reset from triggering
+  const justSubmittedRef = useRef(false);
 
   // Refs for the two hot-zones
   const topDropZoneRef = useRef<HTMLDivElement>(null);
@@ -131,21 +151,79 @@ function TextAreaChat({
 
   const handleSubmit = async () => {
     // Filter out mesh renders from user images
-    const userImages = images.filter((img) => img.source !== 'mesh-render');
+    const submittedUserImages = images.filter(
+      (img) => img.source !== 'mesh-render',
+    );
     const hasMeshProcessing = meshUpload?.isProcessing;
 
     // Debug the early return conditions
     const hasNoContent =
-      userImages.length === 0 && !input?.trim() && !meshUpload;
+      submittedUserImages.length === 0 && !input?.trim() && !meshUpload;
     const hasUploadingImages = images.some((img) => img.isUploading);
 
     if (hasNoContent || disabled || hasUploadingImages || hasMeshProcessing) {
       return;
     }
 
+    // Workflow validation: check if selected workflow requirements are met
+    let effectiveWorkflowMode = workflowMode;
+    if (isWorkflowMode(workflowMode)) {
+      const workflowDef = getWorkflowDefinition(workflowMode);
+      if (workflowDef) {
+        const hasImages = submittedUserImages.length > 0;
+        const hasMesh = !!meshUpload;
+
+        // Check if requirements are met
+        const requirementsUnmet =
+          (workflowDef.requiresImages && !hasImages) ||
+          (workflowDef.requiresMesh && !hasMesh);
+
+        if (requirementsUnmet) {
+          // Log the validation failure
+          workflowLogger.warn('Workflow requirements not met at submission', {
+            workflowMode,
+            requiresImages: workflowDef.requiresImages,
+            hasImages,
+            requiresMesh: workflowDef.requiresMesh,
+            hasMesh,
+          });
+
+          // Show toast warning
+          const missingRequirement =
+            workflowDef.requiresImages && !hasImages ? 'images' : 'a 3D model';
+          toast({
+            title: 'Workflow requirements not met',
+            description: `${workflowDef.label} requires ${missingRequirement}. Falling back to regular chat.`,
+            variant: 'default',
+          });
+
+          // Fall back to chat mode
+          effectiveWorkflowMode = 'chat';
+          setWorkflowMode('chat');
+        } else {
+          // Log successful workflow submission
+          workflowLogger.info('Submitting with workflow mode', {
+            workflowMode,
+            hasImages,
+            hasMesh,
+            hasText: !!input?.trim(),
+          });
+        }
+      }
+    } else {
+      // Log regular chat submission
+      workflowLogger.debug('Submitting regular chat message', {
+        hasImages: submittedUserImages.length > 0,
+        hasMesh: !!meshUpload,
+        hasText: !!input?.trim(),
+      });
+    }
+
     const content: Content = {
       ...(input.trim() !== '' && { text: input.trim() }),
-      ...(userImages.length > 0 && { images: userImages.map((img) => img.id) }),
+      ...(submittedUserImages.length > 0 && {
+        images: submittedUserImages.map((img) => img.id),
+      }),
       // Include mesh data if an STL was uploaded
       ...(meshUpload && {
         mesh: { id: meshUpload.id, fileType: 'stl' },
@@ -156,11 +234,33 @@ function TextAreaChat({
       model: model,
       thinking: supportsThinking, // Automatically enable thinking for models that support it
       outputMode: outputMode, // 3D printable vs multi-part assembly
+      // Include workflow mode if not 'chat' (use effectiveWorkflowMode after validation)
+      ...(isWorkflowMode(effectiveWorkflowMode) && {
+        workflowMode: effectiveWorkflowMode,
+      }),
     };
+
+    // Log the final content object being submitted
+    workflowLogger.info('=== TextAreaChat calling onSubmit ===', {
+      effectiveWorkflowMode,
+      isWorkflowModeResult: isWorkflowMode(effectiveWorkflowMode),
+      contentHasWorkflowMode: 'workflowMode' in content,
+      contentWorkflowMode: content.workflowMode ?? 'NOT SET',
+      contentKeys: Object.keys(content),
+    });
+
+    // Mark that we just submitted so auto-reset doesn't trigger
+    justSubmittedRef.current = true;
+
     onSubmit(content);
     setInput('');
     setImages([]);
     setMeshUpload(null);
+
+    // Clear the flag after a tick to allow the effect to skip
+    setTimeout(() => {
+      justSubmittedRef.current = false;
+    }, 100);
   };
 
   const { mutateAsync: uploadImageAsync } = useMutation({
@@ -631,386 +731,474 @@ function TextAreaChat({
     prevIsDraggingRef.current = isDragging;
   }, [isDragging, images.length]);
 
+  // Auto-reset workflow mode when requirements become unmet
+  // (e.g., user selects Vision to CAD then removes all images)
+  // But NOT immediately after submission (images are cleared as part of submit)
+  useEffect(() => {
+    // Skip if we just submitted - images being cleared is expected
+    if (justSubmittedRef.current) {
+      workflowLogger.debug('Skipping auto-reset: just submitted');
+      return;
+    }
+
+    if (!isWorkflowMode(workflowMode)) return;
+
+    const workflowDef = getWorkflowDefinition(workflowMode);
+    if (!workflowDef) return;
+
+    const currentUserImages = images.filter(
+      (img) => img.source !== 'mesh-render',
+    );
+    const hasImages = currentUserImages.length > 0;
+    const hasMesh = !!meshUpload;
+
+    // Check if requirements are no longer met
+    const requirementsUnmet =
+      (workflowDef.requiresImages && !hasImages) ||
+      (workflowDef.requiresMesh && !hasMesh);
+
+    if (requirementsUnmet) {
+      workflowLogger.info(
+        'Auto-resetting workflow mode: requirements no longer met',
+        {
+          workflowMode,
+          requiresImages: workflowDef.requiresImages,
+          hasImages,
+          requiresMesh: workflowDef.requiresMesh,
+          hasMesh,
+        },
+      );
+      setWorkflowMode('chat');
+    }
+  }, [workflowMode, images, meshUpload, setWorkflowMode]);
+
+  // Get workflow definition for active workflow mode
+  const activeWorkflowDef = isWorkflowMode(workflowMode)
+    ? getWorkflowDefinition(workflowMode)
+    : null;
+
   return (
-    <div
-      className="group relative"
-      onDrop={handleDrop}
-      onDragEnter={(event) => {
-        event.preventDefault();
-        setIsDragging(true);
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        setIsDragging(true);
-      }}
-      onDragLeave={(event) => {
-        event.preventDefault();
-        // If the drag operation leaves the bounds of this entire component,
-        // then isDragHover should definitely be false.
-        if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-          setIsDragHover(false);
-        }
-      }}
-      onClick={() => {
-        textareaRef.current?.focus();
-      }}
-    >
+    <div className="flex flex-col gap-2">
+      {/* Workflow Mode Active Banner */}
+      {isWorkflowMode(workflowMode) && activeWorkflowDef && (
+        <div className="flex items-center justify-between rounded-lg border border-adam-blue/30 bg-adam-blue/10 px-4 py-2">
+          <div className="flex items-center gap-2">
+            {activeWorkflowDef.icon && (
+              <activeWorkflowDef.icon className="h-4 w-4 text-adam-blue" />
+            )}
+            <span className="text-sm font-medium text-adam-blue">
+              {activeWorkflowDef.label} Mode Active
+            </span>
+          </div>
+          <span className="text-xs text-adam-text-secondary">
+            Your next message will trigger this workflow
+          </span>
+        </div>
+      )}
       <div
-        ref={topDropZoneRef}
-        className={cn(
-          'mx-auto flex w-[95%] min-w-52 overflow-hidden rounded-t-xl border-x-2 border-t-2',
-          'transition-[height,opacity,border-color,background-color] duration-200 ease-in-out',
-          disabled
-            ? 'h-0 border-transparent bg-transparent opacity-0'
-            : !isDragging && images.length === 0
-              ? 'h-0 border-transparent bg-transparent opacity-0'
-              : isDragging
-                ? isDragHover
-                  ? 'h-20 border-[#00A6FF] bg-[rgba(0,166,255,0.24)] opacity-100' // Blue, full height
-                  : 'h-20 border-[#0077B7] bg-[rgba(0,166,255,0.12)] opacity-100' // Intermediate blue, full height
-                : images.length > 0
-                  ? 'h-20 border-adam-neutral-700 bg-adam-neutral-950 opacity-100'
-                  : 'h-0 border-transparent bg-transparent opacity-0',
-        )}
+        className="group relative"
+        onDrop={handleDrop}
         onDragEnter={(event) => {
-          if (isDragging) {
-            event.preventDefault();
-            setIsDragHover(true);
-          }
+          event.preventDefault();
+          setIsDragging(true);
         }}
         onDragOver={(event) => {
-          if (isDragging) {
-            event.preventDefault();
-            setIsDragHover(true);
-          }
+          event.preventDefault();
+          setIsDragging(true);
         }}
         onDragLeave={(event) => {
-          if (isDragging) {
-            event.preventDefault();
-            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-              setIsDragHover(false);
-            }
+          event.preventDefault();
+          // If the drag operation leaves the bounds of this entire component,
+          // then isDragHover should definitely be false.
+          if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+            setIsDragHover(false);
           }
         }}
+        onClick={() => {
+          textareaRef.current?.focus();
+        }}
       >
-        {!disabled && (
-          <>
-            {/* Case 1: Dragging, and items are ALREADY present -> Show "Add more images" prompt */}
-            {isDragging && images.length > 0 ? (
-              <div
-                className={cn(
-                  'flex h-full w-full flex-row items-center justify-center gap-2', // Ensure it fills parent
-                  // Opacity is handled by the parent's transition when it appears/disappears due to isDragging
-                )}
-              >
-                <Images
-                  className="h-5 w-5"
-                  style={{
-                    color: isDragHover ? '#00A6FF' : 'rgba(0, 166, 255, 0.85)',
-                  }}
-                />
-                <p
-                  className="text-sm font-normal"
-                  style={{
-                    color: isDragHover ? '#00A6FF' : 'rgba(0, 166, 255, 0.85)',
-                  }}
-                >
-                  Add more images here
-                </p>
-              </div>
-            ) : /* Case 2: No items (images are zero) -> Show original "Drop images and 3D models here" logic */
-            images.length === 0 ? (
-              <div
-                className={cn(
-                  'flex h-full w-full flex-row items-center justify-center gap-2', // Ensure it fills parent
-                  dropMessageTransitionClass,
-                  dropMessageOpacityClass,
-                )}
-              >
-                <Images
-                  className="h-5 w-5"
-                  style={{
-                    color: isDragHover ? '#00A6FF' : 'rgba(0, 166, 255, 0.85)',
-                  }}
-                />
-                <p
-                  className="text-sm font-normal"
-                  style={{
-                    color: isDragHover ? '#00A6FF' : 'rgba(0, 166, 255, 0.85)',
-                  }}
-                >
-                  Drop images and 3D models here
-                </p>
-              </div>
-            ) : (
-              /* Case 3: Items are present, and NOT dragging -> Show thumbnails */
-              images.length > 0 && (
+        <div
+          ref={topDropZoneRef}
+          className={cn(
+            'mx-auto flex w-[95%] min-w-52 overflow-hidden rounded-t-xl border-x-2 border-t-2',
+            'transition-[height,opacity,border-color,background-color] duration-200 ease-in-out',
+            disabled
+              ? 'h-0 border-transparent bg-transparent opacity-0'
+              : !isDragging && images.length === 0
+                ? 'h-0 border-transparent bg-transparent opacity-0'
+                : isDragging
+                  ? isDragHover
+                    ? 'h-20 border-[#00A6FF] bg-[rgba(0,166,255,0.24)] opacity-100' // Blue, full height
+                    : 'h-20 border-[#0077B7] bg-[rgba(0,166,255,0.12)] opacity-100' // Intermediate blue, full height
+                  : images.length > 0
+                    ? 'h-20 border-adam-neutral-700 bg-adam-neutral-950 opacity-100'
+                    : 'h-0 border-transparent bg-transparent opacity-0',
+          )}
+          onDragEnter={(event) => {
+            if (isDragging) {
+              event.preventDefault();
+              setIsDragHover(true);
+            }
+          }}
+          onDragOver={(event) => {
+            if (isDragging) {
+              event.preventDefault();
+              setIsDragHover(true);
+            }
+          }}
+          onDragLeave={(event) => {
+            if (isDragging) {
+              event.preventDefault();
+              if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                setIsDragHover(false);
+              }
+            }
+          }}
+        >
+          {!disabled && (
+            <>
+              {/* Case 1: Dragging, and items are ALREADY present -> Show "Add more images" prompt */}
+              {isDragging && images.length > 0 ? (
                 <div
                   className={cn(
-                    'flex w-full items-center gap-4 overflow-x-auto overflow-y-hidden p-4',
-                    // Opacity dimming logic can remain if desired, or be simplified
-                    isDragging && images.length > 0
-                      ? 'opacity-60'
-                      : 'opacity-100',
-                    'transition-opacity duration-150',
+                    'flex h-full w-full flex-row items-center justify-center gap-2', // Ensure it fills parent
+                    // Opacity is handled by the parent's transition when it appears/disappears due to isDragging
                   )}
                 >
-                  <AnimatePresence>
-                    {' '}
-                    {images.map((image) => (
-                      <motion.div
-                        key={`image-${image.id}`}
-                        className="relative h-12 w-12 flex-shrink-0"
-                        variants={itemAnimationVariants}
-                        initial="initial"
-                        animate="animate"
-                        exit="exit"
-                        layout
-                      >
-                        <img
-                          src={image.url}
-                          alt={
-                            image.source === 'mesh-render'
-                              ? '3D Model View'
-                              : 'Image'
-                          }
-                          className="h-12 w-12 rounded-md object-cover"
-                        />
-                        {/* Show 3D icon badge for mesh renders */}
-                        {image.source === 'mesh-render' && (
-                          <div className="absolute bottom-0 left-0 rounded-br-md rounded-tl-md bg-adam-blue/80 p-0.5">
-                            <Box className="h-3 w-3 text-white" />
-                          </div>
-                        )}
-                        {image.isUploading && (
-                          <div className="absolute inset-0 flex items-center justify-center rounded-md bg-black/50">
-                            <Loader2 className="h-4 w-4 animate-spin text-white" />
-                          </div>
-                        )}
-                        <button
-                          onClick={() => handleImageRemoved(image)}
-                          disabled={image.isUploading}
-                          className={cn(
-                            'absolute right-[-0.50rem] top-[-0.50rem] rounded-full border border-adam-neutral-500 bg-adam-neutral-500 text-white transition-colors duration-200 hover:border-adam-neutral-700 hover:bg-adam-neutral-700',
-                            image.isUploading && 'opacity-50',
-                          )}
-                        >
-                          <CircleX className="h-4 w-4 stroke-[1.5]" />
-                        </button>
-                      </motion.div>
-                    ))}
-                  </AnimatePresence>
+                  <Images
+                    className="h-5 w-5"
+                    style={{
+                      color: isDragHover
+                        ? '#00A6FF'
+                        : 'rgba(0, 166, 255, 0.85)',
+                    }}
+                  />
+                  <p
+                    className="text-sm font-normal"
+                    style={{
+                      color: isDragHover
+                        ? '#00A6FF'
+                        : 'rgba(0, 166, 255, 0.85)',
+                    }}
+                  >
+                    Add more images here
+                  </p>
                 </div>
-              )
-            )}
-          </>
-        )}
-      </div>
-      <div
-        ref={textAreaContainerZoneRef}
-        className={cn(
-          'relative rounded-2xl border-2',
-          isFocused
-            ? 'border-adam-blue shadow-[inset_0px_0px_8px_0px_rgba(0,0,0,0.08)]'
-            : 'border-adam-neutral-700 shadow-[inset_0px_0px_8px_0px_rgba(0,0,0,0.08)] hover:border-adam-neutral-400',
-          'bg-adam-background-2 transition-all duration-300',
-        )}
-        onDragEnter={(event) => {
-          if (isDragging) {
-            event.preventDefault();
-            setIsDragHover(true);
-          }
-        }}
-        onDragOver={(event) => {
-          if (isDragging) {
-            event.preventDefault();
-            setIsDragHover(true);
-          }
-        }}
-        onDragLeave={(event) => {
-          if (isDragging) {
-            event.preventDefault();
-            if (!event.currentTarget.contains(event.relatedTarget as Node)) {
-              setIsDragHover(false);
-            }
-          }
-        }}
-      >
-        <div className="flex select-none items-center justify-between p-2">
-          <Avatar className="h-8 w-8">
-            <div className="h-full w-full p-1.5">
-              <img
-                src={`${import.meta.env.BASE_URL}/Adam-Logo.png`}
-                alt="Adam Logo"
-                className="h-full w-full object-contain"
-              />
-            </div>
-          </Avatar>
-          <div className="relative grid w-full">
-            <Textarea
-              disabled={disabled}
-              value={input}
-              ref={textareaRef}
-              translate="no"
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              onBlur={() => setIsFocused(false)}
-              onFocus={() => setIsFocused(true)}
-              onChange={(e) => {
-                setInput(e.target.value);
-              }}
-              placeholder={placeholderAnim}
-              className="hide-scrollbar z-40 block h-auto min-h-0 w-full resize-none overflow-hidden whitespace-pre-line break-words border-none bg-adam-neutral-800 bg-transparent px-3 py-2 text-base text-adam-text-primary outline-none transition-all duration-500 placeholder:text-adam-text-secondary placeholder:opacity-[var(--placeholder-opacity)] placeholder:transition-all placeholder:duration-300 placeholder:ease-in-out hover:placeholder:blur-[0.2px] focus:border-0 focus:shadow-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-gray-200 sm:px-4 sm:text-sm"
-              style={
-                {
-                  '--placeholder-opacity': placeholderOpacity,
-                  gridArea: '1 / -1',
-                } as React.CSSProperties
-              }
-              rows={1}
-            />
-            <div
-              className="pointer-events-none col-start-1 row-start-1 w-full overflow-hidden whitespace-pre-wrap break-words px-3 py-2 text-sm opacity-0 sm:px-4"
-              style={{ gridArea: '1 / -1' }}
-            >
-              <span>{input}</span>
-              <br />
-            </div>
-          </div>
-          {showPromptGenerator && (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 flex-shrink-0 rounded-full hover:bg-adam-neutral-800"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    generatePrompt();
-                  }}
-                  disabled={isGeneratingPrompt || disabled}
-                >
-                  {isGeneratingPrompt ? (
-                    <Loader2 className="h-4 w-4 animate-spin text-adam-blue" />
-                  ) : (
-                    <Wand2 className="h-4 w-4 text-gray-400 transition-colors duration-200 hover:text-white" />
+              ) : /* Case 2: No items (images are zero) -> Show original "Drop images and 3D models here" logic */
+              images.length === 0 ? (
+                <div
+                  className={cn(
+                    'flex h-full w-full flex-row items-center justify-center gap-2', // Ensure it fills parent
+                    dropMessageTransitionClass,
+                    dropMessageOpacityClass,
                   )}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                {input.trim() ? 'Enhance Prompt' : 'Generate Prompt'}
-              </TooltipContent>
-            </Tooltip>
+                >
+                  <Images
+                    className="h-5 w-5"
+                    style={{
+                      color: isDragHover
+                        ? '#00A6FF'
+                        : 'rgba(0, 166, 255, 0.85)',
+                    }}
+                  />
+                  <p
+                    className="text-sm font-normal"
+                    style={{
+                      color: isDragHover
+                        ? '#00A6FF'
+                        : 'rgba(0, 166, 255, 0.85)',
+                    }}
+                  >
+                    Drop images and 3D models here
+                  </p>
+                </div>
+              ) : (
+                /* Case 3: Items are present, and NOT dragging -> Show thumbnails */
+                images.length > 0 && (
+                  <div
+                    className={cn(
+                      'flex w-full items-center gap-4 overflow-x-auto overflow-y-hidden p-4',
+                      // Opacity dimming logic can remain if desired, or be simplified
+                      isDragging && images.length > 0
+                        ? 'opacity-60'
+                        : 'opacity-100',
+                      'transition-opacity duration-150',
+                    )}
+                  >
+                    <AnimatePresence>
+                      {' '}
+                      {images.map((image) => (
+                        <motion.div
+                          key={`image-${image.id}`}
+                          className="relative h-12 w-12 flex-shrink-0"
+                          variants={itemAnimationVariants}
+                          initial="initial"
+                          animate="animate"
+                          exit="exit"
+                          layout
+                        >
+                          <img
+                            src={image.url}
+                            alt={
+                              image.source === 'mesh-render'
+                                ? '3D Model View'
+                                : 'Image'
+                            }
+                            className="h-12 w-12 rounded-md object-cover"
+                          />
+                          {/* Show 3D icon badge for mesh renders */}
+                          {image.source === 'mesh-render' && (
+                            <div className="absolute bottom-0 left-0 rounded-br-md rounded-tl-md bg-adam-blue/80 p-0.5">
+                              <Box className="h-3 w-3 text-white" />
+                            </div>
+                          )}
+                          {image.isUploading && (
+                            <div className="absolute inset-0 flex items-center justify-center rounded-md bg-black/50">
+                              <Loader2 className="h-4 w-4 animate-spin text-white" />
+                            </div>
+                          )}
+                          <button
+                            onClick={() => handleImageRemoved(image)}
+                            disabled={image.isUploading}
+                            className={cn(
+                              'absolute right-[-0.50rem] top-[-0.50rem] rounded-full border border-adam-neutral-500 bg-adam-neutral-500 text-white transition-colors duration-200 hover:border-adam-neutral-700 hover:bg-adam-neutral-700',
+                              image.isUploading && 'opacity-50',
+                            )}
+                          >
+                            <CircleX className="h-4 w-4 stroke-[1.5]" />
+                          </button>
+                        </motion.div>
+                      ))}
+                    </AnimatePresence>
+                  </div>
+                )
+              )}
+            </>
           )}
         </div>
-        <div className="flex items-center justify-between border-t border-[#2a2a2a] p-3">
-          <div className="flex items-center gap-3">
-            <div
-              className={cn(
-                'transition-all duration-300 ease-out',
-                'pointer-events-auto scale-100 opacity-100',
-              )}
-            >
-              <Button
-                variant="outline"
-                className="flex h-8 w-8 items-center gap-2 rounded-lg border border-[#2a2a2a] bg-adam-background-2 p-0 text-sm text-adam-text-secondary hover:bg-adam-bg-secondary-dark"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  const input = document.createElement('input');
-                  input.type = 'file';
-                  input.accept = [...VALID_IMAGE_FORMATS, '.stl'].join(', ');
-                  input.multiple = true;
-                  input.onchange = (event) => {
-                    handleItemsChange(
-                      event as unknown as ChangeEvent<HTMLInputElement>,
-                    );
-                  };
-                  input.click();
-                }}
-                disabled={disabled || meshUpload?.isProcessing}
-              >
-                {meshUpload?.isProcessing ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <ImagePlus className="h-5 w-5" />
-                )}
-              </Button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* Output Mode Toggle */}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <ToggleGroup
-                  type="single"
-                  value={outputMode}
-                  onValueChange={(value) => {
-                    if (value) setOutputMode(value as OutputMode);
-                  }}
-                  className="h-8"
-                  disabled={disabled}
-                >
-                  <ToggleGroupItem
-                    value="printable"
-                    aria-label="3D Printable mode"
-                    className={cn(
-                      'h-8 gap-1 px-2 text-xs data-[state=on]:bg-adam-blue/20 data-[state=on]:text-adam-blue',
-                      isFocused && 'data-[state=on]:bg-adam-blue/30',
-                    )}
-                  >
-                    <Printer className="h-3.5 w-3.5" />
-                    Print
-                  </ToggleGroupItem>
-                  <ToggleGroupItem
-                    value="assembly"
-                    aria-label="Multi-part Assembly mode"
-                    className={cn(
-                      'h-8 gap-1 px-2 text-xs data-[state=on]:bg-adam-blue/20 data-[state=on]:text-adam-blue',
-                      isFocused && 'data-[state=on]:bg-adam-blue/30',
-                    )}
-                  >
-                    <Layers className="h-3.5 w-3.5" />
-                    Assembly
-                  </ToggleGroupItem>
-                </ToggleGroup>
-              </TooltipTrigger>
-              <TooltipContent>
-                {outputMode === 'printable'
-                  ? '3D Printable: Manifold, watertight geometry'
-                  : 'Assembly: Multi-part visualization'}
-              </TooltipContent>
-            </Tooltip>
-            <ModelSelector
-              disabled={disabled}
-              models={PARAMETRIC_MODELS}
-              selectedModel={model}
-              onModelChange={setModel}
-              focused={isFocused}
-            />
-            {/* Enhanced submit button */}
-            <button
-              onClick={() => {
-                handleSubmit();
-              }}
-              className={cn(
-                'flex h-8 w-8 transform items-center justify-center rounded-lg bg-adam-neutral-700 p-1 text-white transition-all duration-300 hover:scale-105 hover:bg-adam-blue/90 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:bg-adam-blue',
-                (images.some((img) => img.isUploading) ||
-                  meshUpload?.isProcessing) &&
-                  'opacity-50',
-              )}
-              disabled={
-                (images.filter((img) => img.source !== 'mesh-render').length ===
-                  0 &&
-                  !input?.trim() &&
-                  !meshUpload) ||
-                images.some((img) => img.isUploading) ||
-                meshUpload?.isProcessing ||
-                disabled
+        <div
+          ref={textAreaContainerZoneRef}
+          className={cn(
+            'relative rounded-2xl border-2',
+            isFocused
+              ? 'border-adam-blue shadow-[inset_0px_0px_8px_0px_rgba(0,0,0,0.08)]'
+              : 'border-adam-neutral-700 shadow-[inset_0px_0px_8px_0px_rgba(0,0,0,0.08)] hover:border-adam-neutral-400',
+            'bg-adam-background-2 transition-all duration-300',
+          )}
+          onDragEnter={(event) => {
+            if (isDragging) {
+              event.preventDefault();
+              setIsDragHover(true);
+            }
+          }}
+          onDragOver={(event) => {
+            if (isDragging) {
+              event.preventDefault();
+              setIsDragHover(true);
+            }
+          }}
+          onDragLeave={(event) => {
+            if (isDragging) {
+              event.preventDefault();
+              if (!event.currentTarget.contains(event.relatedTarget as Node)) {
+                setIsDragHover(false);
               }
-            >
-              <ArrowUp className="h-5 w-5" />
-            </button>
+            }
+          }}
+        >
+          <div className="flex select-none items-center justify-between p-2">
+            <Avatar className="h-8 w-8">
+              <div className="h-full w-full p-1.5">
+                <img
+                  src={`${import.meta.env.BASE_URL}/Adam-Logo.png`}
+                  alt="Adam Logo"
+                  className="h-full w-full object-contain"
+                />
+              </div>
+            </Avatar>
+            <div className="relative grid w-full">
+              <Textarea
+                disabled={disabled}
+                value={input}
+                ref={textareaRef}
+                translate="no"
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onBlur={() => setIsFocused(false)}
+                onFocus={() => setIsFocused(true)}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                }}
+                placeholder={placeholderAnim}
+                className="hide-scrollbar z-40 block h-auto min-h-0 w-full resize-none overflow-hidden whitespace-pre-line break-words border-none bg-adam-neutral-800 bg-transparent px-3 py-2 text-base text-adam-text-primary outline-none transition-all duration-500 placeholder:text-adam-text-secondary placeholder:opacity-[var(--placeholder-opacity)] placeholder:transition-all placeholder:duration-300 placeholder:ease-in-out hover:placeholder:blur-[0.2px] focus:border-0 focus:shadow-none focus:outline-none focus:ring-0 focus-visible:outline-none focus-visible:ring-0 focus-visible:ring-offset-0 dark:text-gray-200 sm:px-4 sm:text-sm"
+                style={
+                  {
+                    '--placeholder-opacity': placeholderOpacity,
+                    gridArea: '1 / -1',
+                  } as React.CSSProperties
+                }
+                rows={1}
+              />
+              <div
+                className="pointer-events-none col-start-1 row-start-1 w-full overflow-hidden whitespace-pre-wrap break-words px-3 py-2 text-sm opacity-0 sm:px-4"
+                style={{ gridArea: '1 / -1' }}
+              >
+                <span>{input}</span>
+                <br />
+              </div>
+            </div>
+            {showPromptGenerator && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8 flex-shrink-0 rounded-full hover:bg-adam-neutral-800"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      generatePrompt();
+                    }}
+                    disabled={isGeneratingPrompt || disabled}
+                  >
+                    {isGeneratingPrompt ? (
+                      <Loader2 className="h-4 w-4 animate-spin text-adam-blue" />
+                    ) : (
+                      <Wand2 className="h-4 w-4 text-gray-400 transition-colors duration-200 hover:text-white" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {input.trim() ? 'Enhance Prompt' : 'Generate Prompt'}
+                </TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+          <div className="flex items-center justify-between border-t border-[#2a2a2a] p-3">
+            <div className="flex items-center gap-3">
+              <div
+                className={cn(
+                  'transition-all duration-300 ease-out',
+                  'pointer-events-auto scale-100 opacity-100',
+                )}
+              >
+                <Button
+                  variant="outline"
+                  className="flex h-8 w-8 items-center gap-2 rounded-lg border border-[#2a2a2a] bg-adam-background-2 p-0 text-sm text-adam-text-secondary hover:bg-adam-bg-secondary-dark"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const input = document.createElement('input');
+                    input.type = 'file';
+                    input.accept = [...VALID_IMAGE_FORMATS, '.stl'].join(', ');
+                    input.multiple = true;
+                    input.onchange = (event) => {
+                      handleItemsChange(
+                        event as unknown as ChangeEvent<HTMLInputElement>,
+                      );
+                    };
+                    input.click();
+                  }}
+                  disabled={disabled || meshUpload?.isProcessing}
+                >
+                  {meshUpload?.isProcessing ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <ImagePlus className="h-5 w-5" />
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {/* Output Mode Toggle */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <ToggleGroup
+                    type="single"
+                    value={outputMode}
+                    onValueChange={(value) => {
+                      if (value) setOutputMode(value as OutputMode);
+                    }}
+                    className="h-8"
+                    disabled={disabled}
+                  >
+                    <ToggleGroupItem
+                      value="printable"
+                      aria-label="3D Printable mode"
+                      className={cn(
+                        'h-8 gap-1 px-2 text-xs data-[state=on]:bg-adam-blue/20 data-[state=on]:text-adam-blue',
+                        isFocused && 'data-[state=on]:bg-adam-blue/30',
+                      )}
+                    >
+                      <Printer className="h-3.5 w-3.5" />
+                      Print
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="assembly"
+                      aria-label="Multi-part Assembly mode"
+                      className={cn(
+                        'h-8 gap-1 px-2 text-xs data-[state=on]:bg-adam-blue/20 data-[state=on]:text-adam-blue',
+                        isFocused && 'data-[state=on]:bg-adam-blue/30',
+                      )}
+                    >
+                      <Layers className="h-3.5 w-3.5" />
+                      Assembly
+                    </ToggleGroupItem>
+                  </ToggleGroup>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {outputMode === 'printable'
+                    ? '3D Printable: Manifold, watertight geometry'
+                    : 'Assembly: Multi-part visualization'}
+                </TooltipContent>
+              </Tooltip>
+              {/* Divider */}
+              <div className="h-6 w-px bg-adam-neutral-700" />
+              {/* Workflow Mode Selector */}
+              <WorkflowModeSelector
+                value={workflowMode}
+                onChange={setWorkflowMode}
+                disabled={disabled}
+                hasImages={
+                  images.filter((img) => img.source !== 'mesh-render').length >
+                  0
+                }
+                hasMesh={!!meshUpload}
+                focused={isFocused}
+              />
+              {/* Divider */}
+              <div className="h-6 w-px bg-adam-neutral-700" />
+              <ModelSelector
+                disabled={disabled}
+                models={PARAMETRIC_MODELS}
+                selectedModel={model}
+                onModelChange={setModel}
+                focused={isFocused}
+              />
+              {/* Enhanced submit button */}
+              <button
+                onClick={() => {
+                  handleSubmit();
+                }}
+                className={cn(
+                  'flex h-8 w-8 transform items-center justify-center rounded-lg bg-adam-neutral-700 p-1 text-white transition-all duration-300 hover:scale-105 hover:bg-adam-blue/90 disabled:opacity-50 disabled:hover:scale-100 disabled:hover:bg-adam-blue',
+                  (images.some((img) => img.isUploading) ||
+                    meshUpload?.isProcessing) &&
+                    'opacity-50',
+                )}
+                disabled={
+                  (images.filter((img) => img.source !== 'mesh-render')
+                    .length === 0 &&
+                    !input?.trim() &&
+                    !meshUpload) ||
+                  images.some((img) => img.isUploading) ||
+                  meshUpload?.isProcessing ||
+                  disabled
+                }
+              >
+                <ArrowUp className="h-5 w-5" />
+              </button>
+            </div>
           </div>
         </div>
       </div>

@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from 'react';
+import { useRef, useState } from 'react';
 import { Message } from '@shared/types';
 import {
   ChevronLeft,
@@ -23,12 +23,7 @@ import { useCurrentMessage } from '@/contexts/CurrentMessageContext';
 import { ImageViewer } from '@/components/ImageViewer';
 import { TreeNode } from '@shared/Tree';
 import { UserAvatar } from '@/components/chat/UserAvatar';
-import {
-  useEditMessageMutation,
-  useInsertMessageMutation,
-} from '@/services/messageService';
-import { WorkflowTriggerButton } from '@/components/workflow/WorkflowTriggerButton';
-import type { Workflow } from '@shared/workflowTypes';
+import { useEditMessageMutation } from '@/services/messageService';
 
 interface UserMessageProps {
   isLoading: boolean;
@@ -43,54 +38,6 @@ export function UserMessage({ message, isLoading }: UserMessageProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const { conversation, updateConversation } = useConversation();
   const { mutate: editMessage } = useEditMessageMutation();
-  const { mutateAsync: insertMessage } = useInsertMessageMutation();
-  const { setCurrentMessage } = useCurrentMessage();
-
-  /**
-   * Handle workflow completion - create assistant message with generated code
-   * and set it as the current message so it renders in the viewport
-   */
-  const handleWorkflowComplete = useCallback(
-    async (_workflow: Workflow, code?: string) => {
-      if (!code || !conversation) return;
-
-      try {
-        // Create an assistant message with the generated code
-        const assistantMessage = await insertMessage({
-          conversation_id: conversation.id,
-          parent_message_id: message.id,
-          role: 'assistant',
-          content: {
-            text: 'Here is the generated OpenSCAD code based on your image:',
-            artifact: {
-              title: 'Generated from Image',
-              version: '1.0.0',
-              code,
-              parameters: [],
-            },
-          },
-        });
-
-        // Set the new message as current so the viewer renders it
-        setCurrentMessage(assistantMessage);
-
-        // Update conversation to point to the new leaf
-        updateConversation({
-          ...conversation,
-          current_message_leaf_id: assistantMessage.id,
-        });
-      } catch (error) {
-        console.error('Failed to create message from workflow:', error);
-      }
-    },
-    [
-      conversation,
-      message.id,
-      insertMessage,
-      setCurrentMessage,
-      updateConversation,
-    ],
-  );
 
   const changeLeaf = (messageId: string) => {
     updateConversation({
@@ -190,18 +137,6 @@ export function UserMessage({ message, isLoading }: UserMessageProps) {
             <div className="flex flex-wrap gap-1">
               <UserMessageImagesViewer message={message} />
             </div>
-            {/* Workflow trigger button for messages with images */}
-            {message.content.images && message.content.images.length > 0 && (
-              <div className="mt-2">
-                <WorkflowTriggerButton
-                  conversationId={conversation?.id || ''}
-                  messageId={message.id}
-                  hasImages={true}
-                  disabled={isLoading}
-                  onWorkflowComplete={handleWorkflowComplete}
-                />
-              </div>
-            )}
             {(isEditing || (input && input.length > 0)) && (
               <div
                 className={cn(

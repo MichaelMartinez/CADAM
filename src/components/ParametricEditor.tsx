@@ -19,6 +19,7 @@ import { CodePanel } from '@/components/code/CodePanel';
 import { useBlob } from '@/contexts/BlobContext';
 import { useColor } from '@/contexts/ColorContext';
 import { SourceMappingProvider } from '@/contexts/SourceMappingContext';
+import type { WorkflowIntent } from '@/views/EditorView';
 
 const PANEL_SIZES = {
   CHAT: {
@@ -42,7 +43,11 @@ const PANEL_SIZES = {
   },
 } as const;
 
-export function ParametricEditor() {
+interface ParametricEditorProps {
+  workflowIntent?: WorkflowIntent;
+}
+
+export function ParametricEditor({ workflowIntent }: ParametricEditorProps) {
   const { conversation } = useConversation();
   const { currentMessage, setCurrentMessage } = useCurrentMessage();
   const { setBlob } = useBlob();
@@ -257,7 +262,10 @@ export function ParametricEditor() {
             order={0}
           >
             <div className="relative h-full">
-              <ChatSection messages={currentMessageBranch ?? []} />
+              <ChatSection
+                messages={currentMessageBranch ?? []}
+                workflowIntent={workflowIntent}
+              />
             </div>
           </Panel>
           <PanelResizeHandle className="resize-handle group relative">
