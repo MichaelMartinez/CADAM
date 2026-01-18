@@ -36,25 +36,26 @@
   }
 
   .dark {
-    --background: 0 0% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 0 0% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 0 0% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 0 0% 9%;
-    --secondary: 0 0% 14.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 0 0% 14.9%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 0 0% 14.9%;
-    --accent-foreground: 0 0% 98%;
+    /* Adam dark theme - backgrounds use adam-background colors */
+    --background: 0 0% 10%; /* #191A1A - adam-background-2 */
+    --foreground: 0 0% 90%; /* #E5E5E5 - adam-neutral-50 */
+    --card: 0 0% 13%; /* #212121 - adam-background-1 */
+    --card-foreground: 0 0% 90%; /* #E5E5E5 - adam-neutral-50 */
+    --popover: 0 0% 10%; /* #191A1A - adam-background-2 */
+    --popover-foreground: 0 0% 90%; /* #E5E5E5 - adam-neutral-50 */
+    --primary: 0 0% 90%; /* #E5E5E5 - adam-neutral-50 */
+    --primary-foreground: 0 0% 10%; /* #191A1A - adam-background-2 */
+    --secondary: 0 0% 23%; /* #3B3B3B - adam-neutral-700 */
+    --secondary-foreground: 0 0% 90%; /* #E5E5E5 - adam-neutral-50 */
+    --muted: 0 0% 23%; /* #3B3B3B - adam-neutral-700 */
+    --muted-foreground: 0 0% 58%; /* #949494 - adam-neutral-300 */
+    --accent: 0 0% 18%; /* #2D2D2D - adam-neutral-800 */
+    --accent-foreground: 0 0% 90%; /* #E5E5E5 - adam-neutral-50 */
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 0 0% 14.9%;
-    --input: 0 0% 14.9%;
-    --ring: 0 0% 83.1%;
+    --border: 0 0% 23%; /* #3B3B3B - adam-neutral-700 */
+    --input: 0 0% 23%; /* #3B3B3B - adam-neutral-700 */
+    --ring: 0 0% 84%; /* #D7D7D7 - adam-neutral-100 */
     --chart-1: 220 70% 50%;
     --chart-2: 160 60% 45%;
     --chart-3: 30 80% 55%;
