@@ -118,21 +118,21 @@ function getStatusIcon(
 function getStatusColor(status: StepStatus | WorkflowStatus): string {
   switch (status) {
     case 'pending':
-      return 'bg-gray-100 text-gray-600';
+      return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
     case 'running':
-      return 'bg-blue-100 text-blue-600';
+      return 'bg-blue-100 text-blue-600 dark:bg-blue-900/50 dark:text-blue-400';
     case 'completed':
-      return 'bg-green-100 text-green-600';
+      return 'bg-green-100 text-green-600 dark:bg-green-900/50 dark:text-green-400';
     case 'failed':
-      return 'bg-red-100 text-red-600';
+      return 'bg-red-100 text-red-600 dark:bg-red-900/50 dark:text-red-400';
     case 'skipped':
-      return 'bg-gray-100 text-gray-500';
+      return 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500';
     case 'awaiting_decision':
-      return 'bg-yellow-100 text-yellow-600';
+      return 'bg-yellow-100 text-yellow-600 dark:bg-yellow-900/50 dark:text-yellow-400';
     case 'cancelled':
-      return 'bg-gray-100 text-gray-500';
+      return 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500';
     default:
-      return 'bg-gray-100 text-gray-600';
+      return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400';
   }
 }
 
@@ -154,9 +154,12 @@ function StepIndicator({ step, isActive }: StepIndicatorProps) {
     <div
       className={cn(
         'flex items-center gap-2 rounded-md px-3 py-2 transition-colors',
-        isActive && 'border border-blue-200 bg-blue-50',
-        !isActive && step.status === 'completed' && 'bg-green-50',
-        !isActive && step.status === 'failed' && 'bg-red-50',
+        isActive &&
+          'border border-blue-300 bg-blue-50 dark:border-blue-700 dark:bg-blue-900/30',
+        !isActive &&
+          step.status === 'completed' &&
+          'bg-green-50 dark:bg-green-900/20',
+        !isActive && step.status === 'failed' && 'bg-red-50 dark:bg-red-900/20',
       )}
     >
       <div className="flex-shrink-0">
@@ -268,11 +271,13 @@ export function WorkflowProgress({
 
       {/* Error Display */}
       {workflow?.error && (
-        <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3">
-          <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-500" />
+        <div className="flex items-start gap-2 rounded-md border border-red-300 bg-red-50 p-3 dark:border-red-700 dark:bg-red-900/30">
+          <XCircle className="mt-0.5 h-5 w-5 flex-shrink-0 text-red-600 dark:text-red-400" />
           <div>
-            <p className="font-medium text-red-700">Error</p>
-            <p className="text-sm text-red-600">{workflow.error}</p>
+            <p className="font-medium text-red-800 dark:text-red-200">Error</p>
+            <p className="text-sm text-red-700 dark:text-red-300">
+              {workflow.error}
+            </p>
           </div>
         </div>
       )}

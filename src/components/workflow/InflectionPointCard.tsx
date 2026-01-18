@@ -36,7 +36,9 @@ import {
   Image as ImageIcon,
   Code,
   FileText,
+  Loader2,
 } from 'lucide-react';
+import { useWorkflowImage } from '@/hooks/useWorkflowImage';
 
 // =============================================================================
 // Types
@@ -46,7 +48,7 @@ interface InflectionPointCardProps {
   inflectionPoint: InflectionPoint;
   onResolve: (optionId: string, feedback?: string) => void;
   isResolving?: boolean;
-  imageUrlResolver?: (imageId: string) => string;
+  conversationId: string;
 }
 
 // =============================================================================
@@ -67,13 +69,19 @@ const iconMap: Record<string, React.ReactNode> = {
 
 function ConfidenceBadge({ confidence }: { confidence: string }) {
   const colorMap: Record<string, string> = {
-    high: 'bg-green-100 text-green-800',
-    medium: 'bg-yellow-100 text-yellow-800',
-    low: 'bg-red-100 text-red-800',
+    high: 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300',
+    medium:
+      'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/50 dark:text-yellow-300',
+    low: 'bg-red-100 text-red-800 dark:bg-red-900/50 dark:text-red-300',
   };
 
   return (
-    <Badge className={colorMap[confidence] || 'bg-gray-100 text-gray-800'}>
+    <Badge
+      className={
+        colorMap[confidence] ||
+        'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300'
+      }
+    >
       {confidence} confidence
     </Badge>
   );
@@ -82,23 +90,36 @@ function ConfidenceBadge({ confidence }: { confidence: string }) {
 function ImagePreview({
   imageId,
   label,
-  imageUrlResolver,
+  conversationId,
 }: {
   imageId: string;
   label?: string;
-  imageUrlResolver?: (id: string) => string;
+  conversationId: string;
 }) {
-  const url = imageUrlResolver?.(imageId) || `/api/images/${imageId}`;
+  const { imageUrl, isLoading, error } = useWorkflowImage({
+    imageId,
+    conversationId,
+  });
 
   return (
     <div className="space-y-1">
       {label && <span className="text-xs text-muted-foreground">{label}</span>}
-      <div className="relative aspect-square w-full max-w-[200px] overflow-hidden rounded-md border bg-muted">
-        <img
-          src={url}
-          alt={label || 'Preview'}
-          className="h-full w-full object-contain"
-        />
+      <div className="relative aspect-square w-full max-w-[300px] overflow-hidden rounded-md border bg-muted">
+        {isLoading ? (
+          <div className="flex h-full w-full items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          </div>
+        ) : error ? (
+          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+            <span className="text-sm">Failed to load image</span>
+          </div>
+        ) : (
+          <img
+            src={imageUrl}
+            alt={label || 'Preview'}
+            className="h-full w-full object-contain"
+          />
+        )}
       </div>
     </div>
   );
@@ -176,7 +197,7 @@ function AnalysisDisplay({ analysis }: { analysis: VLMStructuredOutput }) {
 function CodePreview({ code }: { code: string }) {
   return (
     <div className="relative">
-      <pre className="max-h-[300px] overflow-x-auto overflow-y-auto rounded-md bg-muted p-4 text-xs">
+      <pre className="max-h-[500px] overflow-x-auto overflow-y-auto rounded-md bg-muted p-4 text-xs">
         <code>{code}</code>
       </pre>
     </div>
@@ -189,10 +210,10 @@ function VerificationDisplay({
   verification: VerificationResult;
 }) {
   const qualityColors: Record<string, string> = {
-    excellent: 'text-green-600',
-    good: 'text-green-500',
-    fair: 'text-yellow-500',
-    poor: 'text-red-500',
+    excellent: 'text-green-600 dark:text-green-400',
+    good: 'text-green-500 dark:text-green-400',
+    fair: 'text-yellow-600 dark:text-yellow-400',
+    poor: 'text-red-600 dark:text-red-400',
   };
 
   return (
@@ -259,25 +280,25 @@ function VerificationDisplay({
 
 function ComparisonView({
   comparison,
-  imageUrlResolver,
+  conversationId,
 }: {
   comparison: {
     before: { image_id: string; label: string };
     after: { image_id: string; label: string };
   };
-  imageUrlResolver?: (id: string) => string;
+  conversationId: string;
 }) {
   return (
     <div className="grid grid-cols-2 gap-4">
       <ImagePreview
         imageId={comparison.before.image_id}
         label={comparison.before.label}
-        imageUrlResolver={imageUrlResolver}
+        conversationId={conversationId}
       />
       <ImagePreview
         imageId={comparison.after.image_id}
         label={comparison.after.label}
-        imageUrlResolver={imageUrlResolver}
+        conversationId={conversationId}
       />
     </div>
   );
@@ -291,7 +312,7 @@ export function InflectionPointCard({
   inflectionPoint,
   onResolve,
   isResolving = false,
-  imageUrlResolver,
+  conversationId,
 }: InflectionPointCardProps) {
   const [selectedOption, setSelectedOption] =
     useState<InflectionPointOption | null>(null);
@@ -338,7 +359,7 @@ export function InflectionPointCard({
   };
 
   return (
-    <Card className="w-full max-w-2xl">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <AlertCircle className="h-5 w-5 text-yellow-500" />
@@ -411,7 +432,7 @@ export function InflectionPointCard({
                       key={img.id}
                       imageId={img.id}
                       label={img.label}
-                      imageUrlResolver={imageUrlResolver}
+                      conversationId={conversationId}
                     />
                   ))}
                 </div>
@@ -434,7 +455,7 @@ export function InflectionPointCard({
               <TabsContent value="comparison" className="mt-4">
                 <ComparisonView
                   comparison={context.comparison!}
-                  imageUrlResolver={imageUrlResolver}
+                  conversationId={conversationId}
                 />
               </TabsContent>
             )}

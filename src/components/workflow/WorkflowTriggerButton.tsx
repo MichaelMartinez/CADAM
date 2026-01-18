@@ -22,6 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { VisuallyHidden } from '@radix-ui/react-visually-hidden';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -332,7 +333,13 @@ export function WorkflowTriggerButton({
 
       {/* Workflow Progress Dialog */}
       <Dialog open={isWorkflowOpen} onOpenChange={handleCloseWorkflow}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent
+          className="max-h-[90vh] w-[90vw] max-w-5xl overflow-y-auto"
+          aria-describedby={undefined}
+        >
+          <VisuallyHidden>
+            <DialogTitle>Workflow Progress</DialogTitle>
+          </VisuallyHidden>
           {activeWorkflowId && (
             <WorkflowPanel
               workflowId={activeWorkflowId}
@@ -343,7 +350,9 @@ export function WorkflowTriggerButton({
           )}
           {error && !activeWorkflowId && (
             <div className="py-8 text-center">
-              <p className="text-red-600">Failed to start workflow</p>
+              <p className="text-red-600 dark:text-red-400">
+                Failed to start workflow
+              </p>
               <p className="mt-1 text-sm text-muted-foreground">{error}</p>
               <Button
                 variant="outline"

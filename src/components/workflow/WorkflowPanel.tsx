@@ -26,7 +26,6 @@ import { InflectionPointCard } from './InflectionPointCard';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { X, RefreshCw, Loader2, Camera } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
 import { captureAndUploadViewerScreenshot } from '@/utils/screenshotUtils';
 
 // =============================================================================
@@ -132,6 +131,7 @@ export function WorkflowPanel({
 
         case 'workflow.inflection_point':
           refetchInflectionPoint();
+          refetchWorkflow(); // Also refetch workflow to get updated status
           break;
 
         case 'workflow.screenshot_requested':
@@ -191,12 +191,6 @@ export function WorkflowPanel({
     );
   };
 
-  // Image URL resolver using Supabase storage
-  const imageUrlResolver = (imageId: string): string => {
-    const { data } = supabase.storage.from('images').getPublicUrl(imageId);
-    return data.publicUrl;
-  };
-
   // Render based on workflow status
   if (!workflow) {
     return (
@@ -243,13 +237,13 @@ export function WorkflowPanel({
 
         {/* Screenshot Capture Section */}
         {(isCapturingScreenshot || isProvidingScreenshot) && (
-          <div className="flex items-center gap-3 rounded-lg bg-blue-50 p-4">
-            <Camera className="h-5 w-5 animate-pulse text-blue-500" />
+          <div className="flex items-center gap-3 rounded-lg bg-blue-100 p-4 dark:bg-blue-900/30">
+            <Camera className="h-5 w-5 animate-pulse text-blue-600 dark:text-blue-400" />
             <div>
-              <p className="font-medium text-blue-700">
+              <p className="font-medium text-blue-800 dark:text-blue-200">
                 Capturing screenshot...
               </p>
-              <p className="text-sm text-blue-600">
+              <p className="text-sm text-blue-700 dark:text-blue-300">
                 {isCapturingScreenshot
                   ? 'Taking a screenshot of the 3D viewer'
                   : 'Sending screenshot to workflow'}
@@ -260,13 +254,15 @@ export function WorkflowPanel({
 
         {/* Screenshot Error Section */}
         {screenshotError && (
-          <div className="flex items-center gap-3 rounded-lg bg-red-50 p-4">
-            <X className="h-5 w-5 text-red-500" />
+          <div className="flex items-center gap-3 rounded-lg bg-red-100 p-4 dark:bg-red-900/30">
+            <X className="h-5 w-5 text-red-600 dark:text-red-400" />
             <div>
-              <p className="font-medium text-red-700">
+              <p className="font-medium text-red-800 dark:text-red-200">
                 Screenshot capture failed
               </p>
-              <p className="text-sm text-red-600">{screenshotError}</p>
+              <p className="text-sm text-red-700 dark:text-red-300">
+                {screenshotError}
+              </p>
             </div>
           </div>
         )}
@@ -277,7 +273,7 @@ export function WorkflowPanel({
             inflectionPoint={inflectionPoint}
             onResolve={handleResolveInflection}
             isResolving={isResolving}
-            imageUrlResolver={imageUrlResolver}
+            conversationId={workflow.conversation_id}
           />
         )}
 
