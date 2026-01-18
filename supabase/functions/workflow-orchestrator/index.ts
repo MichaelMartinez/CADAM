@@ -45,12 +45,22 @@ Deno.serve(async (req: Request) => {
     return new Response('ok', { headers: corsHeaders });
   }
 
+  console.log('[WorkflowOrchestrator] Received request:', req.method, req.url);
+
   try {
     const isGodMode = Deno.env.get('GOD_MODE') === 'true';
 
     // Create Supabase client with user's auth token
     const authHeader = req.headers.get('Authorization');
+    console.log('[WorkflowOrchestrator] Auth check:', {
+      hasAuthHeader: !!authHeader,
+      isGodMode,
+    });
+
     if (!authHeader && !isGodMode) {
+      console.log(
+        '[WorkflowOrchestrator] Auth failed: Missing authorization header',
+      );
       return errorResponse('Missing authorization header', 401);
     }
 
@@ -78,7 +88,14 @@ Deno.serve(async (req: Request) => {
       error: authError,
     } = await supabase.auth.getUser();
 
+    console.log('[WorkflowOrchestrator] User auth result:', {
+      hasUser: !!user,
+      userId: user?.id,
+      authError: authError?.message,
+    });
+
     if (!isGodMode && (authError || !user)) {
+      console.log('[WorkflowOrchestrator] Auth failed: Invalid authentication');
       return errorResponse('Invalid authentication', 401);
     }
 
@@ -87,6 +104,14 @@ Deno.serve(async (req: Request) => {
 
     // Parse request
     const body: WorkflowOrchestratorRequest = await req.json();
+
+    console.log('[WorkflowOrchestrator] Request body:', {
+      action: body.action,
+      workflow_type: (body as StartWorkflowRequest).workflow_type,
+      conversation_id: (body as StartWorkflowRequest).conversation_id,
+      trigger_message_id: (body as StartWorkflowRequest).trigger_message_id,
+      workflow_id: (body as ResumeWorkflowRequest).workflow_id,
+    });
 
     // Route to appropriate handler
     switch (body.action) {
@@ -107,7 +132,11 @@ Deno.serve(async (req: Request) => {
         );
     }
   } catch (error) {
-    console.error('Workflow orchestrator error:', error);
+    console.error('[WorkflowOrchestrator] Top-level error:', error);
+    console.error(
+      '[WorkflowOrchestrator] Error stack:',
+      error instanceof Error ? error.stack : 'No stack',
+    );
     return errorResponse(
       error instanceof Error ? error.message : 'Internal server error',
       500,
@@ -126,9 +155,16 @@ async function handleStart(
   ctx: RequestContext,
   request: StartWorkflowRequest,
 ): Promise<Response> {
+  console.log('[WorkflowOrchestrator:handleStart] Starting workflow:', {
+    workflow_type: request.workflow_type,
+    conversation_id: request.conversation_id,
+    trigger_message_id: request.trigger_message_id,
+  });
+
   const isGodMode = Deno.env.get('GOD_MODE') === 'true';
 
   // Validate conversation access
+  console.log('[WorkflowOrchestrator:handleStart] Validating conversation...');
   const { data: conversation, error: convError } = await ctx.supabase
     .from('conversations')
     .select('id, user_id')
@@ -136,14 +172,30 @@ async function handleStart(
     .single();
 
   if (convError || !conversation) {
+    console.log('[WorkflowOrchestrator:handleStart] Conversation not found:', {
+      error: convError?.message,
+      conversation_id: request.conversation_id,
+    });
     return errorResponse('Conversation not found', 404);
   }
 
+  console.log('[WorkflowOrchestrator:handleStart] Conversation found:', {
+    conversation_id: conversation.id,
+    user_id: conversation.user_id,
+  });
+
   if (!isGodMode && conversation.user_id !== ctx.userId) {
+    console.log('[WorkflowOrchestrator:handleStart] Access denied:', {
+      conversation_user_id: conversation.user_id,
+      request_user_id: ctx.userId,
+    });
     return errorResponse('Access denied', 403);
   }
 
   // Validate trigger message exists
+  console.log(
+    '[WorkflowOrchestrator:handleStart] Validating trigger message...',
+  );
   const { data: message, error: msgError } = await ctx.supabase
     .from('messages')
     .select('id, content')
@@ -152,16 +204,43 @@ async function handleStart(
     .single();
 
   if (msgError || !message) {
+    console.log(
+      '[WorkflowOrchestrator:handleStart] Trigger message not found:',
+      {
+        error: msgError?.message,
+        message_id: request.trigger_message_id,
+      },
+    );
     return errorResponse('Trigger message not found', 404);
   }
 
+  console.log('[WorkflowOrchestrator:handleStart] Trigger message found:', {
+    message_id: message.id,
+    content_type: typeof message.content,
+    content_preview: JSON.stringify(message.content).slice(0, 200),
+  });
+
   // Build workflow config
   const config = buildWorkflowConfig(request.config);
+  console.log('[WorkflowOrchestrator:handleStart] Workflow config built:', {
+    tier: config.models.tier,
+    vision_model: config.models.vision,
+    inflection_points_enabled: config.inflection_points?.enabled,
+  });
 
   // Initialize workflow state based on type
   const state = initializeWorkflowState(request.workflow_type, message.content);
+  console.log(
+    '[WorkflowOrchestrator:handleStart] Workflow state initialized:',
+    {
+      type: state.type,
+      original_image_ids: state.original_image_ids,
+      image_count: state.original_image_ids.length,
+    },
+  );
 
   // Create workflow record
+  console.log('[WorkflowOrchestrator:handleStart] Creating workflow record...');
   const { data: workflow, error: createError } = await ctx.supabase
     .from('workflows')
     .insert({
@@ -178,13 +257,26 @@ async function handleStart(
     .single();
 
   if (createError || !workflow) {
+    console.error(
+      '[WorkflowOrchestrator:handleStart] Failed to create workflow:',
+      {
+        error: createError?.message,
+        code: createError?.code,
+      },
+    );
     return errorResponse(
       `Failed to create workflow: ${createError?.message}`,
       500,
     );
   }
 
+  console.log('[WorkflowOrchestrator:handleStart] Workflow created:', {
+    workflow_id: workflow.id,
+    status: workflow.status,
+  });
+
   // Execute workflow with SSE streaming
+  console.log('[WorkflowOrchestrator:handleStart] Starting SSE streaming...');
   return streamWorkflowExecution(
     ctx.supabase,
     workflow as unknown as Workflow,
@@ -357,6 +449,15 @@ async function handleProvideScreenshot(
   ctx: RequestContext,
   request: ProvideScreenshotRequest,
 ): Promise<Response> {
+  console.log(
+    '[WorkflowOrchestrator:handleProvideScreenshot] Received screenshot',
+    {
+      workflow_id: request.workflow_id,
+      step_id: request.step_id,
+      screenshot_image_id: request.screenshot_image_id,
+    },
+  );
+
   const isGodMode = Deno.env.get('GOD_MODE') === 'true';
 
   // Load workflow
@@ -367,8 +468,24 @@ async function handleProvideScreenshot(
     .single();
 
   if (error || !workflow) {
+    console.log(
+      '[WorkflowOrchestrator:handleProvideScreenshot] Workflow not found',
+      {
+        error: error?.message,
+        workflow_id: request.workflow_id,
+      },
+    );
     return errorResponse('Workflow not found', 404);
   }
+
+  console.log(
+    '[WorkflowOrchestrator:handleProvideScreenshot] Workflow loaded',
+    {
+      workflow_id: workflow.id,
+      status: workflow.status,
+      current_step: workflow.current_step,
+    },
+  );
 
   // Check access
   const conv = workflow.conversations as unknown as { user_id: string };
@@ -378,6 +495,11 @@ async function handleProvideScreenshot(
 
   // Update workflow state with the screenshot image ID
   const currentState = workflow.state as unknown as VisionToScadState;
+  console.log('[WorkflowOrchestrator:handleProvideScreenshot] Current state:', {
+    render_image_ids: currentState.render_image_ids,
+    scad_code_length: currentState.scad_code?.length,
+  });
+
   const updatedState: VisionToScadState = {
     ...currentState,
     render_image_ids: [
@@ -385,6 +507,10 @@ async function handleProvideScreenshot(
       request.screenshot_image_id,
     ],
   };
+
+  console.log('[WorkflowOrchestrator:handleProvideScreenshot] Updated state:', {
+    render_image_ids: updatedState.render_image_ids,
+  });
 
   await ctx.supabase
     .from('workflows')
@@ -395,6 +521,10 @@ async function handleProvideScreenshot(
       updated_at: new Date().toISOString(),
     })
     .eq('id', request.workflow_id);
+
+  console.log(
+    '[WorkflowOrchestrator:handleProvideScreenshot] State persisted, resuming workflow',
+  );
 
   // Resume the workflow to continue verification
   const typedWorkflow: Workflow = {
@@ -425,9 +555,25 @@ function streamWorkflowExecution(
   workflow: Workflow,
   config: WorkflowConfig,
 ): Response {
+  console.log(
+    '[WorkflowOrchestrator:streamWorkflowExecution] Starting stream:',
+    {
+      workflow_id: workflow.id,
+      workflow_type: workflow.workflow_type,
+    },
+  );
+
   const stream = new ReadableStream({
     async start(controller) {
+      console.log(
+        '[WorkflowOrchestrator:streamWorkflowExecution] Stream started',
+      );
+
       const emit = (event: WorkflowEvent) => {
+        console.log(
+          '[WorkflowOrchestrator:streamWorkflowExecution] Emitting event:',
+          event.type,
+        );
         const data = `data: ${JSON.stringify(event)}\n\n`;
         controller.enqueue(new TextEncoder().encode(data));
       };
@@ -441,10 +587,20 @@ function streamWorkflowExecution(
 
       try {
         // Create and execute appropriate pipeline
+        console.log(
+          '[WorkflowOrchestrator:streamWorkflowExecution] Creating pipeline for:',
+          workflow.workflow_type,
+        );
         switch (workflow.workflow_type) {
           case 'vision-to-scad': {
             const pipeline = new VisionToScadPipeline(pipelineCtx);
+            console.log(
+              '[WorkflowOrchestrator:streamWorkflowExecution] Executing VisionToScad pipeline...',
+            );
             await pipeline.execute();
+            console.log(
+              '[WorkflowOrchestrator:streamWorkflowExecution] Pipeline execution completed',
+            );
             break;
           }
           // Add other workflow types here
@@ -454,6 +610,14 @@ function streamWorkflowExecution(
             );
         }
       } catch (error) {
+        console.error(
+          '[WorkflowOrchestrator:streamWorkflowExecution] Pipeline error:',
+          error,
+        );
+        console.error(
+          '[WorkflowOrchestrator:streamWorkflowExecution] Error stack:',
+          error instanceof Error ? error.stack : 'No stack',
+        );
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         emit({
@@ -465,6 +629,9 @@ function streamWorkflowExecution(
         });
       } finally {
         // Send done marker
+        console.log(
+          '[WorkflowOrchestrator:streamWorkflowExecution] Sending done marker',
+        );
         controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
         controller.close();
       }
@@ -492,9 +659,24 @@ function streamWorkflowResume(
   userChoice: string,
   userFeedback?: string,
 ): Response {
+  console.log('[WorkflowOrchestrator:streamWorkflowResume] Starting resume', {
+    workflow_id: workflow.id,
+    stepId,
+    userChoice,
+    userFeedback,
+    workflow_state_render_image_ids: (workflow.state as VisionToScadState)
+      .render_image_ids,
+  });
+
   const stream = new ReadableStream({
     async start(controller) {
+      console.log('[WorkflowOrchestrator:streamWorkflowResume] Stream started');
+
       const emit = (event: WorkflowEvent) => {
+        console.log(
+          '[WorkflowOrchestrator:streamWorkflowResume] Emitting event:',
+          event.type,
+        );
         const data = `data: ${JSON.stringify(event)}\n\n`;
         controller.enqueue(new TextEncoder().encode(data));
       };
@@ -508,19 +690,42 @@ function streamWorkflowResume(
 
       try {
         // Get step name from step ID
-        const { data: step } = await supabase
+        console.log(
+          '[WorkflowOrchestrator:streamWorkflowResume] Fetching step name for:',
+          stepId,
+        );
+        const { data: step, error: stepError } = await supabase
           .from('workflow_steps')
           .select('step_name')
           .eq('id', stepId)
           .single();
 
+        console.log(
+          '[WorkflowOrchestrator:streamWorkflowResume] Step lookup result:',
+          {
+            step_name: step?.step_name,
+            error: stepError?.message,
+          },
+        );
+
         const stepName = step?.step_name || 'unknown';
 
         // Create and resume appropriate pipeline
+        console.log(
+          '[WorkflowOrchestrator:streamWorkflowResume] Creating pipeline for:',
+          workflow.workflow_type,
+        );
         switch (workflow.workflow_type) {
           case 'vision-to-scad': {
             const pipeline = new VisionToScadPipeline(pipelineCtx);
+            console.log(
+              '[WorkflowOrchestrator:streamWorkflowResume] Calling resumeFrom:',
+              stepName,
+            );
             await pipeline.resumeFrom(stepName, userChoice, userFeedback);
+            console.log(
+              '[WorkflowOrchestrator:streamWorkflowResume] resumeFrom completed',
+            );
             break;
           }
           default:
@@ -529,6 +734,10 @@ function streamWorkflowResume(
             );
         }
       } catch (error) {
+        console.error(
+          '[WorkflowOrchestrator:streamWorkflowResume] Error:',
+          error,
+        );
         const errorMessage =
           error instanceof Error ? error.message : String(error);
         emit({
@@ -539,6 +748,9 @@ function streamWorkflowResume(
           recovery_options: ['retry'],
         });
       } finally {
+        console.log(
+          '[WorkflowOrchestrator:streamWorkflowResume] Closing stream',
+        );
         controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
         controller.close();
       }
@@ -585,7 +797,7 @@ function buildWorkflowConfig(
       ...overrides?.inflection_points,
     },
     verification: {
-      enabled: false,
+      enabled: true, // Enable verification by default for image comparison
       auto_verify: false,
       max_iterations: 3,
       ...overrides?.verification,
@@ -635,11 +847,28 @@ function initializeWorkflowState(
  * Extract image IDs from message content
  */
 function extractImageIds(content: unknown): string[] {
-  if (!content) return [];
+  console.log(
+    '[WorkflowOrchestrator:extractImageIds] Extracting from content:',
+    {
+      type: typeof content,
+      isArray: Array.isArray(content),
+      preview: JSON.stringify(content).slice(0, 500),
+    },
+  );
+
+  if (!content) {
+    console.log('[WorkflowOrchestrator:extractImageIds] Content is empty');
+    return [];
+  }
 
   // Handle array of content parts (multimodal message)
   if (Array.isArray(content)) {
-    return content
+    console.log(
+      '[WorkflowOrchestrator:extractImageIds] Content is array with',
+      content.length,
+      'parts',
+    );
+    const imageIds = content
       .filter(
         (part): part is { type: 'image'; image_id: string } =>
           typeof part === 'object' &&
@@ -649,19 +878,40 @@ function extractImageIds(content: unknown): string[] {
           'image_id' in part,
       )
       .map((part) => part.image_id);
+    console.log(
+      '[WorkflowOrchestrator:extractImageIds] Extracted image IDs from array:',
+      imageIds,
+    );
+    return imageIds;
   }
 
   // Handle single content object
   if (typeof content === 'object' && content !== null) {
     const obj = content as Record<string, unknown>;
+    console.log(
+      '[WorkflowOrchestrator:extractImageIds] Content is object with keys:',
+      Object.keys(obj),
+    );
     if (obj.type === 'image' && typeof obj.image_id === 'string') {
+      console.log(
+        '[WorkflowOrchestrator:extractImageIds] Found single image:',
+        obj.image_id,
+      );
       return [obj.image_id];
     }
     if ('images' in obj && Array.isArray(obj.images)) {
-      return obj.images.filter((id): id is string => typeof id === 'string');
+      const imageIds = obj.images.filter(
+        (id): id is string => typeof id === 'string',
+      );
+      console.log(
+        '[WorkflowOrchestrator:extractImageIds] Found images array:',
+        imageIds,
+      );
+      return imageIds;
     }
   }
 
+  console.log('[WorkflowOrchestrator:extractImageIds] No images found');
   return [];
 }
 

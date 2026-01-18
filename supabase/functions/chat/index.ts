@@ -12,7 +12,10 @@ import {
   buildAgentPrompt,
   buildCodeGenerationPrompt,
 } from '../_shared/prompts.ts';
-import { getAnonSupabaseClient } from '../_shared/supabaseClient.ts';
+import {
+  getAnonSupabaseClient,
+  getServiceRoleSupabaseClient,
+} from '../_shared/supabaseClient.ts';
 import Tree from '@shared/Tree.ts';
 import parseParameters from '../_shared/parseParameter.ts';
 import { formatUserMessage } from '../_shared/messageUtils.ts';
@@ -335,11 +338,14 @@ Deno.serve(async (req) => {
 
   const isGodMode = Deno.env.get('GOD_MODE') === 'true';
 
-  const supabaseClient = getAnonSupabaseClient({
-    global: {
-      headers: { Authorization: req.headers.get('Authorization') ?? '' },
-    },
-  });
+  // In GOD_MODE, use service role to bypass RLS; otherwise use anon with auth header
+  const supabaseClient = isGodMode
+    ? getServiceRoleSupabaseClient()
+    : getAnonSupabaseClient({
+        global: {
+          headers: { Authorization: req.headers.get('Authorization') ?? '' },
+        },
+      });
 
   // Get user data - required for storage paths even in god mode
   const { data: userData, error: userError } =
@@ -361,8 +367,17 @@ Deno.serve(async (req) => {
     }
   }
 
-  // Use user ID if available, otherwise use 'anonymous' for god mode
-  const userId = userData?.user?.id ?? 'anonymous';
+  // Use user ID if available, or god mode user ID in GOD_MODE
+  // The god mode user ID must match what the frontend uses (from AuthProvider)
+  const GOD_MODE_USER_ID = '00000000-0000-0000-0000-000000000000';
+  const userId = userData?.user?.id ?? (isGodMode ? GOD_MODE_USER_ID : null);
+
+  if (!userId) {
+    return new Response(JSON.stringify({ error: 'User ID not available' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
 
   const {
     messageId,
@@ -502,7 +517,7 @@ Deno.serve(async (req) => {
 
     // Prepare request body
     const requestBody: OpenRouterRequest = {
-      model,
+      model, // Model is already a string (model ID)
       messages: [
         { role: 'system', content: PARAMETRIC_AGENT_PROMPT },
         ...messagesToSend,
@@ -772,7 +787,7 @@ Deno.serve(async (req) => {
               outputMode ?? 'printable',
             );
             const codeRequestBody: OpenRouterRequest = {
-              model,
+              model, // Model is already a string (model ID)
               messages: [
                 { role: 'system', content: codePrompt },
                 ...codeMessages,

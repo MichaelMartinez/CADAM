@@ -6,7 +6,10 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts';
 import { corsHeaders } from '../_shared/cors.ts';
 import 'jsr:@std/dotenv/load';
-import { getAnonSupabaseClient } from '../_shared/supabaseClient.ts';
+import {
+  getAnonSupabaseClient,
+  getServiceRoleSupabaseClient,
+} from '../_shared/supabaseClient.ts';
 import { Content } from '@shared/types.ts';
 import { formatCreativeUserMessage } from '../_shared/messageUtils.ts';
 
@@ -63,13 +66,17 @@ Deno.serve(async (req) => {
 
   const isGodMode = Deno.env.get('GOD_MODE') === 'true';
 
-  const supabaseClient = getAnonSupabaseClient({
-    global: {
-      headers: { Authorization: req.headers.get('Authorization') ?? '' },
-    },
-  });
+  // In GOD_MODE, use service role to bypass RLS for storage access
+  const supabaseClient = isGodMode
+    ? getServiceRoleSupabaseClient()
+    : getAnonSupabaseClient({
+        global: {
+          headers: { Authorization: req.headers.get('Authorization') ?? '' },
+        },
+      });
 
-  let userId = 'god-mode-user';
+  // God mode user UUID - must match the one in AuthProvider.tsx
+  let userId = '00000000-0000-0000-0000-000000000000';
 
   // In god mode, skip auth check
   if (!isGodMode) {

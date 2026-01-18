@@ -250,10 +250,23 @@ export class ImagePreprocessor {
    * Convert image to base64 data URL for API calls
    */
   async toDataUrl(imageId: string): Promise<string> {
+    console.log(
+      '[ImagePreprocessor:toDataUrl] Converting image to dataUrl:',
+      imageId,
+    );
     const imageData = await this.fetchImage(imageId);
+    console.log(
+      '[ImagePreprocessor:toDataUrl] Image fetched, size:',
+      imageData.byteLength,
+    );
     const format = this.detectFormat(imageData);
+    console.log('[ImagePreprocessor:toDataUrl] Detected format:', format);
     const mimeType = this.getMimeType(format);
     const base64 = this.arrayBufferToBase64(imageData);
+    console.log(
+      '[ImagePreprocessor:toDataUrl] Converted to base64, length:',
+      base64.length,
+    );
 
     return `data:${mimeType};base64,${base64}`;
   }
@@ -263,34 +276,74 @@ export class ImagePreprocessor {
   // ---------------------------------------------------------------------------
 
   private async fetchImage(imageId: string): Promise<ArrayBuffer> {
+    console.log('[ImagePreprocessor:fetchImage] Fetching image:', {
+      imageId,
+      bucket: this.bucketName,
+    });
+
     // First, try direct download (in case imageId is already a full path)
+    console.log('[ImagePreprocessor:fetchImage] Attempting direct download...');
     const { data: directData, error: directError } = await this.supabase.storage
       .from(this.bucketName)
       .download(imageId);
 
+    console.log('[ImagePreprocessor:fetchImage] Direct download result:', {
+      success: !directError && !!directData,
+      error: directError?.message,
+      hasData: !!directData,
+    });
+
     if (!directError && directData) {
-      return directData.arrayBuffer();
+      const buffer = await directData.arrayBuffer();
+      console.log(
+        '[ImagePreprocessor:fetchImage] Direct download succeeded, size:',
+        buffer.byteLength,
+      );
+      return buffer;
     }
 
     // If direct download fails, search for the file by ID in the path
     // The storage path format is: {user_id}/{conversation_id}/{image_id}
     // We need to find the full path that ends with this image ID
+    console.log(
+      '[ImagePreprocessor:fetchImage] Direct download failed, searching for image path...',
+    );
     const imagePath = await this.findImagePath(imageId);
+    console.log('[ImagePreprocessor:fetchImage] Found image path:', imagePath);
+
     if (!imagePath) {
+      console.error(
+        '[ImagePreprocessor:fetchImage] Image not found in storage',
+      );
       throw new Error(
         `Failed to fetch image: Image not found with ID ${imageId}`,
       );
     }
 
+    console.log(
+      '[ImagePreprocessor:fetchImage] Downloading from found path...',
+    );
     const { data, error } = await this.supabase.storage
       .from(this.bucketName)
       .download(imagePath);
 
     if (error) {
+      console.error(
+        '[ImagePreprocessor:fetchImage] Download from path failed:',
+        {
+          path: imagePath,
+          error: error.message,
+        },
+      );
       throw new Error(`Failed to fetch image: ${error.message}`);
     }
 
-    return data.arrayBuffer();
+    const buffer = await data.arrayBuffer();
+    console.log(
+      '[ImagePreprocessor:fetchImage] Download succeeded, size:',
+      buffer.byteLength,
+    );
+    return buffer;
   }
 
   /**
@@ -310,15 +363,28 @@ export class ImagePreprocessor {
   private async findImagePathByListing(
     imageId: string,
   ): Promise<string | null> {
+    console.log(
+      '[ImagePreprocessor:findImagePathByListing] Searching for image:',
+      imageId,
+    );
+
     // List root folders (user IDs) in the bucket
     const { data: folders, error: folderError } = await this.supabase.storage
       .from(this.bucketName)
       .list('', { limit: 1000 });
 
     if (folderError || !folders) {
-      console.error('Failed to list storage folders:', folderError);
+      console.error(
+        '[ImagePreprocessor:findImagePathByListing] Failed to list storage folders:',
+        folderError,
+      );
       return null;
     }
+
+    console.log(
+      '[ImagePreprocessor:findImagePathByListing] Found root folders:',
+      folders.length,
+    );
 
     // Search through each user folder
     for (const folder of folders) {
@@ -331,6 +397,10 @@ export class ImagePreprocessor {
         .list(folder.name, { limit: 1000 });
 
       if (!subFolders) continue;
+
+      console.log(
+        `[ImagePreprocessor:findImagePathByListing] Folder ${folder.name} has ${subFolders.length} subfolders`,
+      );
 
       // Search through conversation folders
       for (const subFolder of subFolders) {
@@ -348,11 +418,19 @@ export class ImagePreprocessor {
         );
 
         if (matchingFile) {
-          return `${folder.name}/${subFolder.name}/${matchingFile.name}`;
+          const fullPath = `${folder.name}/${subFolder.name}/${matchingFile.name}`;
+          console.log(
+            '[ImagePreprocessor:findImagePathByListing] Found matching file:',
+            fullPath,
+          );
+          return fullPath;
         }
       }
     }
 
+    console.log(
+      '[ImagePreprocessor:findImagePathByListing] No matching file found',
+    );
     return null;
   }
 
