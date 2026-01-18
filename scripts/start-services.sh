@@ -8,6 +8,13 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 STEP_CONVERTER_DIR="$PROJECT_ROOT/services/step-converter"
+LOGS_DIR="$PROJECT_ROOT/logs"
+
+# Create logs directory if it doesn't exist
+mkdir -p "$LOGS_DIR"
+
+# Generate timestamp for log files
+LOG_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
 # God mode flag - bypasses all authentication
 GOD_MODE=false
@@ -33,6 +40,38 @@ print_warning() {
 
 print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Clean up problematic files before starting services
+# This prevents version mismatches and stale cache issues
+cleanup_dev_artifacts() {
+    print_status "Cleaning up development artifacts..."
+
+    local cleaned=false
+
+    # Remove deno.lock - Supabase edge runtime uses older Deno that doesn't support lockfile v5
+    # The runtime will recreate it with a compatible version
+    if [ -f "$PROJECT_ROOT/supabase/functions/deno.lock" ]; then
+        rm "$PROJECT_ROOT/supabase/functions/deno.lock"
+        print_success "Removed deno.lock (will be recreated with compatible version)"
+        cleaned=true
+    fi
+
+    # Remove Deno cache directory if it exists (can cause stale module issues)
+    if [ -d "$PROJECT_ROOT/supabase/functions/.deno" ]; then
+        rm -rf "$PROJECT_ROOT/supabase/functions/.deno"
+        print_success "Removed .deno cache directory"
+        cleaned=true
+    fi
+
+    # Remove any __pycache__ in step-converter (Python cache)
+    if [ -d "$STEP_CONVERTER_DIR" ]; then
+        find "$STEP_CONVERTER_DIR" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+    fi
+
+    if [ "$cleaned" = false ]; then
+        print_success "No artifacts to clean"
+    fi
 }
 
 # Check if a command exists
@@ -80,14 +119,26 @@ start_supabase() {
 start_supabase_functions() {
     print_status "Starting Supabase Edge Functions..."
     cd "$PROJECT_ROOT"
+
+    # Clean up artifacts that cause boot errors
+    cleanup_dev_artifacts
+
+    # Log file path with timestamp
+    FUNCTIONS_LOG="$LOGS_DIR/supabase-functions-$LOG_TIMESTAMP.log"
+
+    # Also create a symlink to latest log for convenience
+    ln -sf "$FUNCTIONS_LOG" "$LOGS_DIR/supabase-functions-latest.log"
+
     # Run in background with env file, pass GOD_MODE env var if enabled
     if [ "$GOD_MODE" = true ]; then
-        GOD_MODE=true nohup supabase functions serve --no-verify-jwt --env-file ./supabase/functions/.env > /tmp/supabase-functions.log 2>&1 &
+        GOD_MODE=true nohup supabase functions serve --no-verify-jwt --env-file ./supabase/functions/.env > "$FUNCTIONS_LOG" 2>&1 &
     else
-        nohup supabase functions serve --no-verify-jwt --env-file ./supabase/functions/.env > /tmp/supabase-functions.log 2>&1 &
+        nohup supabase functions serve --no-verify-jwt --env-file ./supabase/functions/.env > "$FUNCTIONS_LOG" 2>&1 &
     fi
     sleep 2
-    print_success "Supabase Edge Functions started (logs: /tmp/supabase-functions.log)"
+    print_success "Supabase Edge Functions started"
+    echo "         Logs: $FUNCTIONS_LOG"
+    echo "         Latest: $LOGS_DIR/supabase-functions-latest.log"
 }
 
 # Start step-converter
@@ -109,7 +160,12 @@ start_step_converter() {
 # Start ngrok
 start_ngrok() {
     print_status "Starting ngrok tunnel to Supabase (port 54321)..."
-    nohup ngrok http 54321 > /tmp/ngrok.log 2>&1 &
+
+    # Log file path with timestamp
+    NGROK_LOG="$LOGS_DIR/ngrok-$LOG_TIMESTAMP.log"
+    ln -sf "$NGROK_LOG" "$LOGS_DIR/ngrok-latest.log"
+
+    nohup ngrok http 54321 > "$NGROK_LOG" 2>&1 &
     sleep 3
 
     # Try to get the ngrok URL
@@ -130,15 +186,21 @@ start_ngrok() {
 start_vite() {
     print_status "Starting Vite development server..."
     cd "$PROJECT_ROOT"
+
+    # Log file path with timestamp
+    VITE_LOG="$LOGS_DIR/vite-$LOG_TIMESTAMP.log"
+    ln -sf "$VITE_LOG" "$LOGS_DIR/vite-latest.log"
+
     # Pass VITE_GOD_MODE env var if god mode is enabled
     if [ "$GOD_MODE" = true ]; then
         print_warning "Starting in GOD MODE - all data accessible without login"
-        VITE_GOD_MODE=true nohup npm run dev > /tmp/vite-dev.log 2>&1 &
+        VITE_GOD_MODE=true nohup npm run dev > "$VITE_LOG" 2>&1 &
     else
-        nohup npm run dev > /tmp/vite-dev.log 2>&1 &
+        nohup npm run dev > "$VITE_LOG" 2>&1 &
     fi
     sleep 2
-    print_success "Vite dev server started (network accessible) (logs: /tmp/vite-dev.log)"
+    print_success "Vite dev server started (network accessible)"
+    echo "         Logs: $VITE_LOG"
 }
 
 # Show status of all services
@@ -331,6 +393,55 @@ start_all() {
     show_status
 }
 
+# Tail logs
+tail_logs() {
+    local log_type="${1:-functions}"
+    local log_file=""
+
+    case "$log_type" in
+        functions|f)
+            log_file="$LOGS_DIR/supabase-functions-latest.log"
+            ;;
+        vite|v)
+            log_file="$LOGS_DIR/vite-latest.log"
+            ;;
+        ngrok|n)
+            log_file="$LOGS_DIR/ngrok-latest.log"
+            ;;
+        *)
+            print_error "Unknown log type: $log_type"
+            echo "Available: functions (f), vite (v), ngrok (n)"
+            exit 1
+            ;;
+    esac
+
+    if [ -f "$log_file" ]; then
+        print_status "Tailing $log_file (Ctrl+C to stop)"
+        tail -f "$log_file"
+    else
+        print_error "Log file not found: $log_file"
+        echo "Available logs:"
+        ls -la "$LOGS_DIR"/*.log 2>/dev/null || echo "  No log files found"
+    fi
+}
+
+# List logs
+list_logs() {
+    echo ""
+    echo "=========================================="
+    echo "         Available Log Files"
+    echo "=========================================="
+    echo ""
+    echo "Latest logs (symlinks):"
+    ls -la "$LOGS_DIR"/*-latest.log 2>/dev/null || echo "  No latest logs"
+    echo ""
+    echo "All log files:"
+    ls -lht "$LOGS_DIR"/*.log 2>/dev/null | head -20 || echo "  No log files found"
+    echo ""
+    echo "Logs directory: $LOGS_DIR"
+    echo ""
+}
+
 # Usage
 usage() {
     echo "CADAM Development Services Manager"
@@ -356,6 +467,15 @@ usage() {
     echo "  stop-step        Stop step-converter only"
     echo "  stop-ngrok       Stop ngrok only"
     echo "  stop-vite        Stop Vite dev server only"
+    echo ""
+    echo "Logs:"
+    echo "  logs             List all log files"
+    echo "  tail [type]      Tail logs (functions|f, vite|v, ngrok|n)"
+    echo "                   Default: functions"
+    echo ""
+    echo "Maintenance:"
+    echo "  clean            Clean up dev artifacts (deno.lock, caches)"
+    echo "                   Automatically run before starting functions"
     echo ""
     echo "Options:"
     echo "  --god-mode  Enable god mode (no login required, all data accessible)"
@@ -426,6 +546,17 @@ case "$COMMAND" in
         ;;
     stop-supabase)
         stop_supabase
+        ;;
+    logs)
+        list_logs
+        ;;
+    tail)
+        # Get the second argument for log type
+        shift
+        tail_logs "${1:-functions}"
+        ;;
+    clean)
+        cleanup_dev_artifacts
         ;;
     help|--help|-h)
         usage

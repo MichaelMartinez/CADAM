@@ -37,3 +37,7 @@ dist-ssr
 # Test artifacts
 .playwright-mcp/
 *.jpg
+
+# Deno artifacts - lockfile version incompatible between local Deno and Supabase edge runtime
+supabase/functions/deno.lock
+supabase/functions/.deno/
