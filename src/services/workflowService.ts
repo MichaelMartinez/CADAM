@@ -6,7 +6,7 @@
  */
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { supabase } from '@/lib/supabase';
+import { supabase, isGodMode } from '@/lib/supabase';
 import type {
   Workflow,
   WorkflowConfig,
@@ -50,6 +50,14 @@ export type WorkflowEventHandler = (event: WorkflowEvent) => void;
 // =============================================================================
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
+  // In GOD_MODE, the supabase client already uses service_role key
+  // Backend accepts requests without auth header when GOD_MODE is enabled
+  if (isGodMode) {
+    return {
+      'Content-Type': 'application/json',
+    };
+  }
+
   const {
     data: { session },
   } = await supabase.auth.getSession();
@@ -443,15 +451,21 @@ export function useProvideScreenshot() {
       },
       onEvent?: WorkflowEventHandler,
     ) => {
+      console.log('[workflowService:provideScreenshot] Starting', params);
       setStreamState({ isStreaming: true, events: [] });
 
       try {
+        console.log('[workflowService:provideScreenshot] Streaming events...');
         for await (const event of streamWorkflowEvents({
           action: 'provide_screenshot',
           workflow_id: params.workflowId,
           step_id: params.stepId,
           screenshot_image_id: params.screenshotImageId,
         })) {
+          console.log(
+            '[workflowService:provideScreenshot] Received event:',
+            event.type,
+          );
           setStreamState((prev) => {
             const newState = { ...prev, events: [...prev.events, event] };
 
@@ -477,7 +491,9 @@ export function useProvideScreenshot() {
             });
           }
         }
+        console.log('[workflowService:provideScreenshot] Streaming completed');
       } catch (error) {
+        console.error('[workflowService:provideScreenshot] Error:', error);
         setStreamState((prev) => ({
           ...prev,
           isStreaming: false,

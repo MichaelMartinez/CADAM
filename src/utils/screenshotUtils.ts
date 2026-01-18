@@ -6,27 +6,75 @@
  */
 
 import { supabase } from '@/lib/supabase';
+import { screenshotLogger as log } from '@/lib/logger';
 
 /**
  * Capture a screenshot from a canvas element
+ * Uses toDataURL as a fallback when toBlob fails
  */
 export async function captureCanvasScreenshot(
   canvas: HTMLCanvasElement,
   format: 'png' | 'jpeg' = 'png',
   quality: number = 0.9,
 ): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob(
-      (blob) => {
-        if (blob) {
-          resolve(blob);
-        } else {
-          reject(new Error('Failed to create blob from canvas'));
-        }
-      },
-      `image/${format}`,
-      quality,
+  // Validate canvas dimensions
+  if (canvas.width === 0 || canvas.height === 0) {
+    throw new Error(
+      `Canvas has invalid dimensions: ${canvas.width}x${canvas.height}`,
     );
+  }
+
+  // Try toBlob first
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            // Fallback to toDataURL method
+            log.warn('toBlob returned null, falling back to toDataURL method');
+            try {
+              const dataUrl = canvas.toDataURL(`image/${format}`, quality);
+              if (!dataUrl || dataUrl === 'data:,') {
+                reject(
+                  new Error(
+                    'Failed to create image from canvas - canvas may be tainted or empty',
+                  ),
+                );
+                return;
+              }
+              // Convert dataURL to Blob
+              const byteString = atob(dataUrl.split(',')[1]);
+              const mimeType = dataUrl
+                .split(',')[0]
+                .split(':')[1]
+                .split(';')[0];
+              const ab = new ArrayBuffer(byteString.length);
+              const ia = new Uint8Array(ab);
+              for (let i = 0; i < byteString.length; i++) {
+                ia[i] = byteString.charCodeAt(i);
+              }
+              resolve(new Blob([ab], { type: mimeType }));
+            } catch (dataUrlError) {
+              reject(
+                new Error(
+                  `Failed to create blob from canvas: ${dataUrlError instanceof Error ? dataUrlError.message : String(dataUrlError)}`,
+                ),
+              );
+            }
+          }
+        },
+        `image/${format}`,
+        quality,
+      );
+    } catch (error) {
+      reject(
+        new Error(
+          `Canvas toBlob failed: ${error instanceof Error ? error.message : String(error)}`,
+        ),
+      );
+    }
   });
 }
 
@@ -38,16 +86,61 @@ export function findThreeJsCanvas(): HTMLCanvasElement | null {
   // It's often the only canvas element or can be found by its parent structure
   const canvases = document.querySelectorAll('canvas');
 
+  log.debug(`Found ${canvases.length} canvas elements`);
+
+  // First, try to find a WebGL canvas with valid dimensions
   for (const canvas of canvases) {
-    // Check if this canvas is a WebGL canvas (Three.js uses WebGL)
-    const context = canvas.getContext('webgl2') || canvas.getContext('webgl');
-    if (context) {
-      return canvas;
+    const htmlCanvas = canvas as HTMLCanvasElement;
+
+    // Check dimensions first
+    if (htmlCanvas.width === 0 || htmlCanvas.height === 0) {
+      log.debug(
+        `Skipping canvas with zero dimensions: ${htmlCanvas.width}x${htmlCanvas.height}`,
+      );
+      continue;
+    }
+
+    // Try to detect if this is a WebGL canvas by checking for __three__ internals
+    // or by checking the data-engine attribute that R3F adds
+    const isR3FCanvas =
+      htmlCanvas.getAttribute('data-engine') ||
+      (htmlCanvas as unknown as { __three__?: unknown }).__three__;
+
+    if (isR3FCanvas) {
+      log.info(`Found R3F canvas: ${htmlCanvas.width}x${htmlCanvas.height}`);
+      return htmlCanvas;
+    }
+
+    // Alternative: check if it's a WebGL canvas by trying to get context info
+    // Note: getContext on an existing WebGL canvas returns the existing context
+    try {
+      const existingContext =
+        htmlCanvas.getContext('webgl2') || htmlCanvas.getContext('webgl');
+      if (existingContext) {
+        log.info(
+          `Found WebGL canvas: ${htmlCanvas.width}x${htmlCanvas.height}`,
+        );
+        return htmlCanvas;
+      }
+    } catch {
+      // Context already exists with different type, skip
+      continue;
     }
   }
 
-  // Fallback: return the first canvas if no WebGL canvas found
-  return canvases.length > 0 ? (canvases[0] as HTMLCanvasElement) : null;
+  // Fallback: return the first canvas with valid dimensions
+  for (const canvas of canvases) {
+    const htmlCanvas = canvas as HTMLCanvasElement;
+    if (htmlCanvas.width > 0 && htmlCanvas.height > 0) {
+      log.warn(
+        `Using fallback canvas: ${htmlCanvas.width}x${htmlCanvas.height}`,
+      );
+      return htmlCanvas;
+    }
+  }
+
+  log.error('No valid canvas found');
+  return null;
 }
 
 /**
@@ -83,23 +176,50 @@ export async function captureAndUploadViewerScreenshot(
   workflowId: string,
   purpose: string = 'verification',
 ): Promise<string> {
+  log.info(`Starting screenshot capture for workflow: ${workflowId}`);
+
   const canvas = findThreeJsCanvas();
 
   if (!canvas) {
     throw new Error('Three.js canvas not found in the DOM');
   }
 
-  // For WebGL canvases, we need to ensure preserveDrawingBuffer is true
-  // or capture immediately after a render. Since we can't change the setting
-  // after creation, we'll try to force a re-render by dispatching events.
+  log.info('Canvas found:', {
+    width: canvas.width,
+    height: canvas.height,
+    className: canvas.className,
+    dataEngine: canvas.getAttribute('data-engine'),
+  });
 
-  // Wait a frame to ensure the canvas is rendered
+  // Wait for the model to render - OpenSCAD compilation can take a moment
+  // First, wait for initial render frames
+  log.info('Waiting for initial render frames...');
+  await new Promise((resolve) => requestAnimationFrame(resolve));
   await new Promise((resolve) => requestAnimationFrame(resolve));
 
-  const blob = await captureCanvasScreenshot(canvas, 'png', 0.95);
-  const imageId = await uploadScreenshot(blob, workflowId, purpose);
+  // Then wait additional time for OpenSCAD WASM compilation and STL loading
+  // This is critical because screenshot request arrives immediately after code is generated,
+  // but the model needs time to compile and render
+  log.info('Waiting for model compilation and render (1.5s)...');
+  await new Promise((resolve) => setTimeout(resolve, 1500));
 
-  return imageId;
+  // Wait a few more frames after the timeout to ensure the scene is stable
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  await new Promise((resolve) => requestAnimationFrame(resolve));
+  log.info('Wait complete, capturing screenshot...');
+
+  try {
+    const blob = await captureCanvasScreenshot(canvas, 'png', 0.95);
+    log.info(`Screenshot captured, size: ${blob.size} bytes`);
+
+    const imageId = await uploadScreenshot(blob, workflowId, purpose);
+    log.info(`Screenshot uploaded: ${imageId}`);
+
+    return imageId;
+  } catch (error) {
+    log.error('Failed to capture screenshot:', error);
+    throw error;
+  }
 }
 
 /**
