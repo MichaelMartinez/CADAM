@@ -69,8 +69,11 @@ export function OpenSCADViewer() {
   useEffect(() => {
     // Detect transition from compiling to not compiling
     if (prevIsCompilingRef.current && !isCompiling && currentMessage) {
-      // Only persist if we have events
-      if (compilationEvents.length > 0) {
+      // Skip update for workflow pseudo-messages (they have non-UUID IDs like "workflow-xxx")
+      const isWorkflowPseudoMessage = currentMessage.id.startsWith('workflow-');
+
+      // Only persist if we have events and it's a real message
+      if (compilationEvents.length > 0 && !isWorkflowPseudoMessage) {
         const updatedContent: Content = {
           ...currentMessage.content,
           compilationEvents,

@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { ParametricEditor } from '../components/ParametricEditor';
 import { Message } from '@shared/types';
@@ -10,9 +10,20 @@ import { useConversation } from '@/services/conversationService';
 import { BlobContext } from '@/contexts/BlobContext';
 import { ColorContext } from '@/contexts/ColorContext';
 import { CompilationProvider } from '@/contexts/CompilationContext';
+import type { WorkflowType } from '@shared/workflowTypes';
+
+// Type for workflow intent passed via navigation state
+export interface WorkflowIntent {
+  triggerMessageId: string;
+  workflowType: WorkflowType;
+}
 
 export default function EditorView() {
   const { id: conversationId } = useParams();
+  const location = useLocation();
+  const workflowIntent = (
+    location.state as { workflowIntent?: WorkflowIntent } | null
+  )?.workflowIntent;
   const [currentMessage, setCurrentMessage] = useState<Message | null>(null);
   const [images, setImages] = useState<MessageItem[]>([]);
   const [meshUpload, setMeshUpload] = useState<MeshUploadState | null>(null);
@@ -57,7 +68,7 @@ export default function EditorView() {
             <SelectedItemsContext.Provider
               value={{ images, setImages, meshUpload, setMeshUpload }}
             >
-              <ParametricEditor />
+              <ParametricEditor workflowIntent={workflowIntent} />
             </SelectedItemsContext.Provider>
           </CompilationProvider>
         </ColorContext.Provider>

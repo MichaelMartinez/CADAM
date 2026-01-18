@@ -9,8 +9,13 @@ import { Content, Model } from '@shared/types';
 import { MessageItem, MeshUploadState } from '@/types/misc';
 import { cn } from '@/lib/utils';
 import { SelectedItemsContext } from '@/contexts/SelectedItemsContext';
-import { useSendContentMutation } from '@/services/messageService';
+import {
+  useSendContentMutation,
+  useInsertMessageMutation,
+} from '@/services/messageService';
 import { generateConversationTitle } from '@/services/conversationService';
+import { workflowLogger } from '@/lib/logger';
+import { WorkflowMode } from '@/lib/workflowRegistry';
 
 export function PromptView() {
   const navigate = useNavigate();
@@ -23,6 +28,7 @@ export function PromptView() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [images, setImages] = useState<MessageItem[]>([]);
   const [meshUpload, setMeshUpload] = useState<MeshUploadState | null>(null);
+  const [workflowMode, setWorkflowMode] = useState<WorkflowMode>('chat');
 
   const newConversationId = useMemo(() => {
     return crypto.randomUUID();
@@ -35,6 +41,8 @@ export function PromptView() {
       current_message_leaf_id: null,
     },
   });
+
+  const { mutateAsync: insertMessage } = useInsertMessageMutation();
 
   // Trigger fade in on mount
   useEffect(() => {
@@ -62,6 +70,11 @@ export function PromptView() {
 
   const { mutate: handleGenerate } = useMutation({
     mutationFn: async (content: Content) => {
+      workflowLogger.info('PromptView.handleGenerate called', {
+        hasWorkflowMode: !!content.workflowMode,
+        workflowMode: content.workflowMode ?? 'none',
+      });
+
       // Create conversation immediately with 'New Conversation'
       const { data: conversation, error: conversationError } = await supabase
         .from('conversations')
@@ -77,7 +90,68 @@ export function PromptView() {
 
       if (conversationError) throw conversationError;
 
-      sendMessage(content);
+      // Check if this should trigger a workflow
+      if (content.workflowMode) {
+        workflowLogger.info(
+          'PromptView: Preparing workflow for handoff to EditorView',
+          {
+            workflowType: content.workflowMode,
+            conversationId: conversation.id,
+          },
+        );
+
+        // For workflows: insert user message, then pass workflow intent to EditorView
+        // The EditorView/ChatSection will start the workflow so events go to the right context
+        const userMessage = await insertMessage({
+          role: 'user',
+          content,
+          parent_message_id: null,
+          conversation_id: conversation.id,
+        });
+
+        workflowLogger.info(
+          'PromptView: User message inserted, will handoff to EditorView',
+          {
+            userMessageId: userMessage.id,
+            workflowType: content.workflowMode,
+          },
+        );
+
+        // Invalidate queries so EditorView can find the new conversation
+        queryClient.invalidateQueries({ queryKey: ['conversations'] });
+        queryClient.invalidateQueries({
+          queryKey: ['conversation', conversation.id],
+        });
+
+        // Generate title in the background (don't await)
+        generateConversationTitle(conversation.id, content)
+          .then(async (title) => {
+            await supabase
+              .from('conversations')
+              .update({ title })
+              .eq('id', conversation.id);
+            queryClient.invalidateQueries({ queryKey: ['conversations'] });
+            queryClient.invalidateQueries({
+              queryKey: ['conversation', conversation.id],
+            });
+          })
+          .catch((error) => {
+            console.error('Failed to generate title:', error);
+          });
+
+        // Return workflow intent to be passed via navigation state
+        return {
+          conversationId: conversation.id,
+          content: content,
+          workflowIntent: {
+            triggerMessageId: userMessage.id,
+            workflowType: content.workflowMode,
+          },
+        };
+      } else {
+        // Standard chat message
+        sendMessage(content);
+      }
 
       // Generate title in the background (don't await)
       // Note: We don't need to check if a title exists because this is strictly for new conversations
@@ -108,7 +182,12 @@ export function PromptView() {
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ['conversations'] });
-      navigate(`/editor/${data.conversationId}`);
+      // Navigate with workflowIntent if present - ChatSection will start the workflow
+      navigate(`/editor/${data.conversationId}`, {
+        state: data.workflowIntent
+          ? { workflowIntent: data.workflowIntent }
+          : undefined,
+      });
     },
     onError: (error) => {
       console.error(error);
@@ -165,6 +244,8 @@ export function PromptView() {
                   model={model}
                   setModel={setModel}
                   showPromptGenerator={true}
+                  workflowMode={workflowMode}
+                  onWorkflowModeChange={setWorkflowMode}
                 />
               </SelectedItemsContext.Provider>
               <div className="relative">
