@@ -14,6 +14,7 @@ This fork adds several enhancements to the original CADAM project:
 
 ### New Features
 
+- **Multi-Modal Agentic Workflow** - Vision-to-SCAD pipeline that converts images to OpenSCAD code using VLM analysis with inflection points for user review
 - **STEP File Export** - Export models to STEP format via FreeCAD Docker service for CAD tool compatibility (Fusion 360, SolidWorks, etc.)
 - **Real-Time Compilation Events** - Streaming compilation feedback showing library loading, render progress, timing, and detailed errors
 - **Code Panel with Source Mapping** - Click-to-code navigation linking 3D geometry back to OpenSCAD source lines
@@ -25,7 +26,41 @@ This fork adds several enhancements to the original CADAM project:
 
 - **OpenRouter Migration** - Prompt and title generation moved to OpenRouter for flexibility
 - **Services Manager** - `scripts/start-services.sh` for managing all development services
+- **Comprehensive Logging** - Full request/response logging for LLM calls with persistent timestamped log files
 - **Claude Code Skills** - `/blog-screenshots` command for automated blog post creation with screenshots
+
+### Debugging & Logging
+
+Logs are persisted to the `logs/` directory with timestamps:
+
+```bash
+# View available log files
+./scripts/start-services.sh logs
+
+# Tail edge function logs (includes all workflow and LLM logging)
+./scripts/start-services.sh tail functions
+
+# Tail vite dev server logs
+./scripts/start-services.sh tail vite
+
+# Tail ngrok logs
+./scripts/start-services.sh tail ngrok
+```
+
+Log files:
+
+- `logs/supabase-functions-{timestamp}.log` - Edge function logs with full LLM request/response data
+- `logs/supabase-functions-latest.log` - Symlink to most recent edge function log
+- `logs/vite-{timestamp}.log` - Frontend dev server logs
+- `logs/ngrok-{timestamp}.log` - ngrok tunnel logs
+
+The logging captures:
+
+- Full LLM prompts and responses
+- Token usage and latency metrics
+- Image preprocessing steps
+- Workflow state transitions
+- Error stack traces
 
 ### Quick Start (This Fork)
 
@@ -36,9 +71,52 @@ This fork adds several enhancements to the original CADAM project:
 # Check service status
 ./scripts/start-services.sh status
 
+# View logs (useful for debugging)
+./scripts/start-services.sh tail functions
+
 # Stop all services
 ./scripts/start-services.sh stop
 ```
+
+For development with GOD_MODE (bypasses authentication):
+
+```bash
+# First, get your service role key
+supabase status  # Look for "service_role key"
+
+# Add to .env.local (required for storage uploads to work in god mode)
+# VITE_GOD_MODE="true"
+# VITE_SUPABASE_SERVICE_KEY="<service_role key>"
+
+# Then start with god mode flag
+./scripts/start-services.sh start --god-mode
+```
+
+### Troubleshooting & Maintenance
+
+The start script automatically cleans up development artifacts that cause issues:
+
+```bash
+# Clean up manually (removes deno.lock, caches)
+./scripts/start-services.sh clean
+
+# Full restart (recommended when things go wrong)
+./scripts/start-services.sh restart --god-mode
+```
+
+**Common issues the cleanup fixes:**
+
+- `Unsupported lockfile version '5'` - Deno version mismatch between local and Supabase runtime
+- `Worker failed to boot` - Stale Deno cache after adding new files
+- Edge functions returning 503 - Usually a lockfile or cache issue
+
+**Files that are auto-cleaned:**
+| File | Reason |
+|------|--------|
+| `supabase/functions/deno.lock` | Local Deno creates v5, Supabase runtime needs older version |
+| `supabase/functions/.deno/` | Stale module cache |
+
+See [docs/lessons-learned.md](docs/lessons-learned.md) for more troubleshooting tips.
 
 ---
 
@@ -116,13 +194,23 @@ cd CADAM
 # Install dependencies
 npm install
 
-# Start Supabase
+# Start all services (interactive - will prompt for ngrok/vite)
+./scripts/start-services.sh start
+
+# Or start everything with god mode (no auth required)
+./scripts/start-services.sh start --god-mode
+```
+
+<details>
+<summary>Manual startup (alternative)</summary>
+
+```bash
 npx supabase start
 npx supabase functions serve --no-verify-jwt
-
-# Start the development server
 npm run dev
 ```
+
+</details>
 
 ## 📋 Prerequisites
 
@@ -185,11 +273,35 @@ CADAM uses ngrok to send image URLs to Anthropic:
 npm i
 ```
 
-### Start Supabase Services
+### Start All Services (Recommended)
+
+Use the services manager script for a clean, reproducible startup:
+
+```bash
+# Interactive start - prompts for ngrok and vite
+./scripts/start-services.sh start
+
+# Or with god mode for development without auth
+./scripts/start-services.sh start --god-mode
+```
+
+### Manual Supabase Services (Alternative)
 
 ```bash
 npx supabase start
 npx supabase functions serve --no-verify-jwt
+```
+
+### Service Manager Commands
+
+```bash
+./scripts/start-services.sh start      # Start all services
+./scripts/start-services.sh stop       # Stop all services
+./scripts/start-services.sh restart    # Full restart
+./scripts/start-services.sh status     # Check what's running
+./scripts/start-services.sh clean      # Clean caches/locks
+./scripts/start-services.sh logs       # List log files
+./scripts/start-services.sh tail f     # Tail function logs
 ```
 
 ## 🛠️ Built With

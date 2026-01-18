@@ -646,3 +646,7 @@ npm run lint:supabase
 - **Frontend**: Uses Node.js TypeScript compiler, supports all standard TypeScript features
 - **Edge Functions**: Uses Deno's TypeScript compiler, may have different import/export requirements
 - **Shared Types**: Files in `shared/` are used by both environments, ensure compatibility
+
+# Lessons Learned
+
+See [docs/lessons-learned.md](docs/lessons-learned.md) for common issues and solutions encountered in this codebase. This document is updated as new issues are discovered and resolved.
