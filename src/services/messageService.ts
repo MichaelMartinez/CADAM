@@ -1,5 +1,5 @@
 import { useConversation } from '@/services/conversationService';
-import { supabase } from '@/lib/supabase';
+import { supabase, isGodMode } from '@/lib/supabase';
 import {
   Content,
   Conversation,
@@ -169,17 +169,23 @@ export function useParametricChatMutation({
       const newMessageId = crypto.randomUUID();
       let initialized = false;
 
+      // Build headers - skip auth in GOD_MODE
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (!isGodMode) {
+        const session = (await supabase.auth.getSession()).data.session;
+        if (session?.access_token) {
+          headers.Authorization = `Bearer ${session.access_token}`;
+        }
+      }
+
       // Start streaming request
       const response = await fetch(
         `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/chat`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${
-              (await supabase.auth.getSession()).data.session?.access_token
-            }`,
-          },
+          headers,
           body: JSON.stringify({
             conversationId,
             messageId,

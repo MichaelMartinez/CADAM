@@ -118,22 +118,27 @@ export async function generateConversationTitle(
   conversationId: string,
   content: Content,
 ): Promise<string> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  // Build headers - skip auth in GOD_MODE
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
 
-  if (!session?.access_token) {
-    throw new Error('No active session');
+  if (!isGodMode) {
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+
+    if (!session?.access_token) {
+      throw new Error('No active session');
+    }
+    headers.Authorization = `Bearer ${session.access_token}`;
   }
 
   const response = await fetch(
     `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/title-generator`,
     {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.access_token}`,
-      },
+      headers,
       body: JSON.stringify({
         content,
         conversationId,

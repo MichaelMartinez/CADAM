@@ -56,8 +56,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const initializeAuth = async () => {
       // In god mode, skip auth and create mock god user
       if (isGodMode) {
+        // Use a valid UUID for god mode (all zeros is a valid UUID)
         const godUser = {
-          id: 'god-mode-user',
+          id: '00000000-0000-0000-0000-000000000000',
           email: 'god@local.dev',
           app_metadata: {},
           user_metadata: { full_name: 'God Mode' },
