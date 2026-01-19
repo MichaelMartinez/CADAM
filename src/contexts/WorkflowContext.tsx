@@ -176,11 +176,8 @@ export function WorkflowProvider({ children }: WorkflowProviderProps) {
         case 'workflow.completed': {
           newState.status = 'completed';
           newState.workflow = event.workflow;
-          // Extract generated code from workflow state
-          const state = event.workflow.state;
-          if ('scad_code' in state && state.scad_code) {
-            newState.generatedCode = state.scad_code;
-          }
+          // Note: vision-to-scad workflow (which generated code) was removed
+          // Other workflows don't generate scad_code directly
           break;
         }
 

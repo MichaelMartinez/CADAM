@@ -9,8 +9,8 @@
 // Core Enums and Discriminators
 // =============================================================================
 
+// Note: 'vision-to-scad' was removed - use one-shot chat for image-to-CAD conversion
 export type WorkflowType =
-  | 'vision-to-scad'
   | 'verification-loop'
   | 'assembly-explode'
   | 'multi-angle-optimize';
@@ -61,24 +61,11 @@ export interface Workflow {
 // Workflow State (Type-specific)
 // =============================================================================
 
+// Note: VisionToScadState was removed - use one-shot chat for image-to-CAD conversion
 export type WorkflowState =
-  | VisionToScadState
   | VerificationLoopState
   | AssemblyExplodeState
   | MultiAngleOptimizeState;
-
-export interface VisionToScadState {
-  type: 'vision-to-scad';
-  original_image_ids: string[];
-  enhanced_image_ids?: string[];
-  vlm_description?: string;
-  vlm_structured_output?: VLMStructuredOutput;
-  scad_code?: string;
-  render_image_ids?: string[];
-  verification_result?: VerificationResult;
-  verification_attempts: number;
-  output_message_id?: string;
-}
 
 export interface VerificationLoopState {
   type: 'verification-loop';
@@ -426,7 +413,7 @@ export const DEFAULT_WORKFLOW_CONFIG: WorkflowConfig = {
     tier: 'balanced',
   },
   prompts: {
-    version: 'v1.0',
+    version: 'v2.1', // Updated to use comprehensive prompts with construction approach detection
   },
   preprocessing: {
     enabled: true,
@@ -449,11 +436,7 @@ export const DEFAULT_WORKFLOW_CONFIG: WorkflowConfig = {
 // Type Guards
 // =============================================================================
 
-export function isVisionToScadState(
-  state: WorkflowState,
-): state is VisionToScadState {
-  return (state as VisionToScadState).type === 'vision-to-scad';
-}
+// Note: isVisionToScadState was removed - use one-shot chat for image-to-CAD conversion
 
 export function isVerificationLoopState(
   state: WorkflowState,

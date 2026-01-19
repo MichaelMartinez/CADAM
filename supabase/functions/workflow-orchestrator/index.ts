@@ -19,11 +19,9 @@ import type {
   ResolveInflectionRequest,
   CancelWorkflowRequest,
   ProvideScreenshotRequest,
-  VisionToScadState,
+  WorkflowState,
 } from '../_shared/workflowTypes.ts';
 import { corsHeaders } from '../_shared/cors.ts';
-import { VisionToScadPipeline } from './pipeline/VisionToScadPipeline.ts';
-import type { PipelineContext } from './pipeline/WorkflowPipeline.ts';
 import { getTierModelConfig } from './config/modelRegistry.ts';
 
 // =============================================================================
@@ -229,13 +227,13 @@ async function handleStart(
   });
 
   // Initialize workflow state based on type
+  // Note: initializeWorkflowState will throw an error for all workflow types
+  // since vision-to-scad has been removed and other workflows are not yet implemented
   const state = initializeWorkflowState(request.workflow_type, message.content);
   console.log(
     '[WorkflowOrchestrator:handleStart] Workflow state initialized:',
     {
       type: state.type,
-      original_image_ids: state.original_image_ids,
-      image_count: state.original_image_ids.length,
     },
   );
 
@@ -494,13 +492,16 @@ async function handleProvideScreenshot(
   }
 
   // Update workflow state with the screenshot image ID
-  const currentState = workflow.state as unknown as VisionToScadState;
+  const currentState = workflow.state as unknown as WorkflowState & {
+    render_image_ids?: string[];
+    scad_code?: string;
+  };
   console.log('[WorkflowOrchestrator:handleProvideScreenshot] Current state:', {
     render_image_ids: currentState.render_image_ids,
     scad_code_length: currentState.scad_code?.length,
   });
 
-  const updatedState: VisionToScadState = {
+  const updatedState = {
     ...currentState,
     render_image_ids: [
       ...(currentState.render_image_ids || []),
@@ -551,9 +552,9 @@ async function handleProvideScreenshot(
  * Execute a workflow with SSE streaming
  */
 function streamWorkflowExecution(
-  supabase: SupabaseClient<Database>,
+  _supabase: SupabaseClient<Database>,
   workflow: Workflow,
-  config: WorkflowConfig,
+  _config: WorkflowConfig,
 ): Response {
   console.log(
     '[WorkflowOrchestrator:streamWorkflowExecution] Starting stream:',
@@ -564,7 +565,7 @@ function streamWorkflowExecution(
   );
 
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
       console.log(
         '[WorkflowOrchestrator:streamWorkflowExecution] Stream started',
       );
@@ -578,63 +579,39 @@ function streamWorkflowExecution(
         controller.enqueue(new TextEncoder().encode(data));
       };
 
-      const pipelineCtx: PipelineContext = {
-        supabase,
-        workflow,
-        config,
-        emit,
-      };
+      // Note: vision-to-scad workflow has been removed in favor of one-shot chat approach
+      // which produces better results with lower cost and complexity.
+      // Future workflow types can be added here using pipelineCtx:
+      // const pipelineCtx: PipelineContext = { supabase, workflow, config, emit };
 
-      try {
-        // Create and execute appropriate pipeline
-        console.log(
-          '[WorkflowOrchestrator:streamWorkflowExecution] Creating pipeline for:',
-          workflow.workflow_type,
-        );
-        switch (workflow.workflow_type) {
-          case 'vision-to-scad': {
-            const pipeline = new VisionToScadPipeline(pipelineCtx);
-            console.log(
-              '[WorkflowOrchestrator:streamWorkflowExecution] Executing VisionToScad pipeline...',
-            );
-            await pipeline.execute();
-            console.log(
-              '[WorkflowOrchestrator:streamWorkflowExecution] Pipeline execution completed',
-            );
-            break;
-          }
-          // Add other workflow types here
-          default:
-            throw new Error(
-              `Unsupported workflow type: ${workflow.workflow_type}`,
-            );
-        }
-      } catch (error) {
-        console.error(
-          '[WorkflowOrchestrator:streamWorkflowExecution] Pipeline error:',
-          error,
-        );
-        console.error(
-          '[WorkflowOrchestrator:streamWorkflowExecution] Error stack:',
-          error instanceof Error ? error.stack : 'No stack',
-        );
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        emit({
-          type: 'workflow.failed',
-          workflow_id: workflow.id,
-          error: errorMessage,
-          recoverable: true,
-          recovery_options: ['retry'],
-        });
-      } finally {
-        // Send done marker
-        console.log(
-          '[WorkflowOrchestrator:streamWorkflowExecution] Sending done marker',
-        );
-        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-        controller.close();
-      }
+      console.log(
+        '[WorkflowOrchestrator:streamWorkflowExecution] Workflow type:',
+        workflow.workflow_type,
+      );
+
+      const error = new Error(
+        `Unsupported workflow type: ${workflow.workflow_type}. Use the standard chat interface for image-to-CAD conversion.`,
+      );
+
+      console.error(
+        '[WorkflowOrchestrator:streamWorkflowExecution] Pipeline error:',
+        error,
+      );
+
+      emit({
+        type: 'workflow.failed',
+        workflow_id: workflow.id,
+        error: error.message,
+        recoverable: false,
+        recovery_options: [],
+      });
+
+      // Send done marker
+      console.log(
+        '[WorkflowOrchestrator:streamWorkflowExecution] Sending done marker',
+      );
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
     },
   });
 
@@ -652,9 +629,9 @@ function streamWorkflowExecution(
  * Resume a workflow from a specific step after inflection point resolution
  */
 function streamWorkflowResume(
-  supabase: SupabaseClient<Database>,
+  _supabase: SupabaseClient<Database>,
   workflow: Workflow,
-  config: WorkflowConfig,
+  _config: WorkflowConfig,
   stepId: string,
   userChoice: string,
   userFeedback?: string,
@@ -664,12 +641,11 @@ function streamWorkflowResume(
     stepId,
     userChoice,
     userFeedback,
-    workflow_state_render_image_ids: (workflow.state as VisionToScadState)
-      .render_image_ids,
+    workflow_state: workflow.state,
   });
 
   const stream = new ReadableStream({
-    async start(controller) {
+    start(controller) {
       console.log('[WorkflowOrchestrator:streamWorkflowResume] Stream started');
 
       const emit = (event: WorkflowEvent) => {
@@ -681,79 +657,34 @@ function streamWorkflowResume(
         controller.enqueue(new TextEncoder().encode(data));
       };
 
-      const pipelineCtx: PipelineContext = {
-        supabase,
-        workflow,
-        config,
-        emit,
-      };
+      // Note: vision-to-scad workflow has been removed in favor of one-shot chat approach
+      // Future workflow types can be resumed here
+      console.log(
+        '[WorkflowOrchestrator:streamWorkflowResume] Workflow type:',
+        workflow.workflow_type,
+      );
 
-      try {
-        // Get step name from step ID
-        console.log(
-          '[WorkflowOrchestrator:streamWorkflowResume] Fetching step name for:',
-          stepId,
-        );
-        const { data: step, error: stepError } = await supabase
-          .from('workflow_steps')
-          .select('step_name')
-          .eq('id', stepId)
-          .single();
+      const error = new Error(
+        `Unsupported workflow type: ${workflow.workflow_type}. Use the standard chat interface for image-to-CAD conversion.`,
+      );
 
-        console.log(
-          '[WorkflowOrchestrator:streamWorkflowResume] Step lookup result:',
-          {
-            step_name: step?.step_name,
-            error: stepError?.message,
-          },
-        );
+      console.error(
+        '[WorkflowOrchestrator:streamWorkflowResume] Error:',
+        error,
+      );
 
-        const stepName = step?.step_name || 'unknown';
+      emit({
+        type: 'workflow.failed',
+        workflow_id: workflow.id,
+        error: error.message,
+        recoverable: false,
+        recovery_options: [],
+      });
 
-        // Create and resume appropriate pipeline
-        console.log(
-          '[WorkflowOrchestrator:streamWorkflowResume] Creating pipeline for:',
-          workflow.workflow_type,
-        );
-        switch (workflow.workflow_type) {
-          case 'vision-to-scad': {
-            const pipeline = new VisionToScadPipeline(pipelineCtx);
-            console.log(
-              '[WorkflowOrchestrator:streamWorkflowResume] Calling resumeFrom:',
-              stepName,
-            );
-            await pipeline.resumeFrom(stepName, userChoice, userFeedback);
-            console.log(
-              '[WorkflowOrchestrator:streamWorkflowResume] resumeFrom completed',
-            );
-            break;
-          }
-          default:
-            throw new Error(
-              `Unsupported workflow type: ${workflow.workflow_type}`,
-            );
-        }
-      } catch (error) {
-        console.error(
-          '[WorkflowOrchestrator:streamWorkflowResume] Error:',
-          error,
-        );
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        emit({
-          type: 'workflow.failed',
-          workflow_id: workflow.id,
-          error: errorMessage,
-          recoverable: true,
-          recovery_options: ['retry'],
-        });
-      } finally {
-        console.log(
-          '[WorkflowOrchestrator:streamWorkflowResume] Closing stream',
-        );
-        controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-        controller.close();
-      }
+      // Send done marker
+      console.log('[WorkflowOrchestrator:streamWorkflowResume] Closing stream');
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
     },
   });
 
@@ -819,100 +750,17 @@ function buildWorkflowConfig(
 
 /**
  * Initialize workflow state based on type
+ * Note: vision-to-scad workflow has been removed in favor of one-shot chat approach
  */
 function initializeWorkflowState(
   workflowType: string,
-  messageContent: unknown,
-): VisionToScadState {
-  // Extract image IDs from message content
-  const imageIds = extractImageIds(messageContent);
-
-  switch (workflowType) {
-    case 'vision-to-scad':
-      return {
-        type: 'vision-to-scad',
-        original_image_ids: imageIds,
-        verification_attempts: 0,
-      };
-    default:
-      return {
-        type: 'vision-to-scad',
-        original_image_ids: imageIds,
-        verification_attempts: 0,
-      };
-  }
-}
-
-/**
- * Extract image IDs from message content
- */
-function extractImageIds(content: unknown): string[] {
-  console.log(
-    '[WorkflowOrchestrator:extractImageIds] Extracting from content:',
-    {
-      type: typeof content,
-      isArray: Array.isArray(content),
-      preview: JSON.stringify(content).slice(0, 500),
-    },
+  _messageContent: unknown,
+): WorkflowState {
+  // All workflow types are currently unsupported
+  // The vision-to-scad workflow was removed - use one-shot chat instead
+  throw new Error(
+    `Unsupported workflow type: ${workflowType}. Use the standard chat interface for image-to-CAD conversion.`,
   );
-
-  if (!content) {
-    console.log('[WorkflowOrchestrator:extractImageIds] Content is empty');
-    return [];
-  }
-
-  // Handle array of content parts (multimodal message)
-  if (Array.isArray(content)) {
-    console.log(
-      '[WorkflowOrchestrator:extractImageIds] Content is array with',
-      content.length,
-      'parts',
-    );
-    const imageIds = content
-      .filter(
-        (part): part is { type: 'image'; image_id: string } =>
-          typeof part === 'object' &&
-          part !== null &&
-          'type' in part &&
-          part.type === 'image' &&
-          'image_id' in part,
-      )
-      .map((part) => part.image_id);
-    console.log(
-      '[WorkflowOrchestrator:extractImageIds] Extracted image IDs from array:',
-      imageIds,
-    );
-    return imageIds;
-  }
-
-  // Handle single content object
-  if (typeof content === 'object' && content !== null) {
-    const obj = content as Record<string, unknown>;
-    console.log(
-      '[WorkflowOrchestrator:extractImageIds] Content is object with keys:',
-      Object.keys(obj),
-    );
-    if (obj.type === 'image' && typeof obj.image_id === 'string') {
-      console.log(
-        '[WorkflowOrchestrator:extractImageIds] Found single image:',
-        obj.image_id,
-      );
-      return [obj.image_id];
-    }
-    if ('images' in obj && Array.isArray(obj.images)) {
-      const imageIds = obj.images.filter(
-        (id): id is string => typeof id === 'string',
-      );
-      console.log(
-        '[WorkflowOrchestrator:extractImageIds] Found images array:',
-        imageIds,
-      );
-      return imageIds;
-    }
-  }
-
-  console.log('[WorkflowOrchestrator:extractImageIds] No images found');
-  return [];
 }
 
 /**

@@ -5,6 +5,16 @@
  * Each prompt template is versioned and can be overridden via workflow config.
  */
 
+// Import shared prompt components for composition
+import {
+  BOSL2_LIBRARY_INSTRUCTIONS,
+  CODE_STRUCTURE_REQUIREMENTS,
+  TECHNICAL_DRAWING_GUIDE,
+  IMAGE_INTERPRETATION_GUIDE,
+  CODE_EXAMPLES,
+  OUTPUT_FORMAT,
+} from '../../_shared/prompts.ts';
+
 // =============================================================================
 // Prompt Template Types
 // =============================================================================
@@ -305,6 +315,159 @@ Examples:
     "features": {}
   },
   "bosl2_functions_needed": ["cuboid", "cyl", "difference", "grid_copies", "rounding"],
+  "confidence": "high" | "medium" | "low",
+  "ambiguities": []
+}
+\`\`\``,
+  },
+
+  'v2.1': {
+    description:
+      'VLM grounding v2.1 with construction approach detection and multi-component assembly',
+    created: '2026-01-18',
+    content: `You are an expert CAD engineer with advanced spatial reasoning capabilities, analyzing images to generate OpenSCAD models.
+
+# IGNORE THESE ELEMENTS (Do NOT model)
+
+The following should be COMPLETELY IGNORED - they are NOT part of the 3D geometry:
+
+- **Brand names and logos** (text, emblems, company marks)
+- **Product markings** (model numbers, serial numbers, certifications)
+- **Decorative decals and stickers** (graphics, warning labels)
+- **QR codes and barcodes**
+- **Printed patterns** that are not 3D relief (textures printed on flat surfaces)
+- **Color variations** that don't indicate geometry changes
+- **Reflections and lens flares**
+- **Background objects** not part of the main subject
+
+# CONSTRUCTION APPROACH ANALYSIS (NEW in v2.1)
+
+For each identified shape, determine the CONSTRUCTION METHOD:
+
+## Additive Construction (union)
+- Multiple primitives combined
+- Protrusions added to base
+- Example: Box with boss on top
+
+## Subtractive Construction (difference)
+- Holes cut through material
+- Recesses carved into surface
+- **CRITICAL: Lobed grips = Main cylinder MINUS smaller cylinders at edges**
+
+## Combination (union + difference)
+- Base shape with additions AND subtractions
+
+### CRITICAL: Lobed Grip Detection
+If you see an ergonomic grip with rounded INWARD curves (concave finger recesses):
+- This is a SUBTRACTIVE pattern
+- Base cylinder with cylinders subtracted at perimeter
+- Do NOT describe as "star-shaped" (stars have outward points)
+- Describe as: "lobed grip with N finger recesses created by cylinder subtraction"
+
+# MULTI-COMPONENT ASSEMBLY DETECTION
+
+When analyzing tools, devices, or assembled objects:
+
+1. **Identify Distinct Parts**: Different colors/materials usually mean separate parts
+2. **Name Each Part**: Use functional names (housing, grip, plate, shaft)
+3. **Describe Relationships**: How parts connect/stack
+
+# GEOMETRIC DECOMPOSITION
+
+## Visual Shape → BOSL2 Primitive Mapping
+
+| Visual Shape | BOSL2 Primitive | Notes |
+|-------------|-----------------|-------|
+| Rectangular block | cuboid([x,y,z]) | Use rounding= for rounded edges |
+| Cylinder/tube | cyl(h=, d=) | Use rounding1/rounding2 for ends |
+| Tapered block | prismoid(size1=, size2=, h=) | For pyramidal/trapezoidal shapes |
+| Sphere/dome | sphere(d=) or spheroid() | For ball-like shapes |
+| Tube/pipe | tube(h=, od=, id=) | Hollow cylinder |
+| Cone | cyl(h=, d1=, d2=) | Tapered cylinder |
+| Lobed grip | difference() cyl - zrot_copies cyl | NOT star()! |
+
+## Feature Recognition
+
+| Visual Feature | OpenSCAD Implementation |
+|----------------|------------------------|
+| Through hole | difference() with cyl() |
+| Blind hole | difference() with cyl(anchor=TOP) |
+| Countersink | difference() with cyl() + cone |
+| Counterbore | difference() with cyl() + larger cyl() |
+| Slot | difference() with hull() of two cyls or cuboid |
+| Fillet (rounded edge) | cuboid(..., rounding=r, edges=...) |
+| Chamfer | cuboid(..., chamfer=c, edges=...) |
+| Boss (mounting post) | union() with cyl() |
+| Rib (reinforcement) | union() with thin cuboid() |
+| Lobed/finger grip | difference() cyl - zrot_copies(n=lobes) cyl |
+| Knurling/ridges | difference() cyl - zrot_copies(n=ridges) cuboid |
+
+# DIMENSION EXTRACTION
+
+## For Technical Drawings
+1. Read ALL dimension lines - don't skip any
+2. Identify which view each dimension belongs to
+3. Cross-reference dimensions between views for consistency
+4. Width (X) aligns front↔top, Height (Z) aligns front↔side, Depth (Y) aligns top↔side
+
+## For Photos/Sketches (Estimation)
+Use these reference scales when no dimensions shown:
+- Hand-held devices: 80-150mm
+- Desktop items: 100-300mm
+- Small hardware (screws, clips): 10-50mm
+- Phone/tablet accessories: 60-180mm
+
+## Standard Sizes (use when appropriate)
+- Hole sizes: M3 (3mm), M4 (4mm), M5 (5mm), M6 (6mm), M8 (8mm)
+- Wall thicknesses: 1.5mm, 2mm, 3mm, 4mm
+- Fillet radii: 0.5mm, 1mm, 2mm, 3mm, 5mm
+
+# CRITICAL CONSTRAINTS
+
+## Rounding Validation (MUST CHECK)
+**Formula**: \`rounding_value < min(x, y, z) / 2\`
+
+Examples:
+- cuboid([10, 10, 2], rounding=0.8) → OK (0.8 < 2/2 = 1)
+- cuboid([1.5, 50, 30], rounding=2) → FAILS (2 > 1.5/2 = 0.75)
+- For thin features (< 5mm thickness), omit rounding entirely
+
+# OUTPUT JSON SCHEMA
+\`\`\`json
+{
+  "image_type": "technical_drawing" | "sketch" | "photo" | "cad_screenshot" | "unknown",
+  "description": "2-3 sentence description focusing on GEOMETRIC function and form",
+  "ignored_elements": ["List of branding, logos, text, decorations that were ignored"],
+  "is_assembly": true | false,
+  "parts": [
+    {
+      "name": "functional_name",
+      "color_hint": "observed color",
+      "shape_description": "brief shape description",
+      "construction_method": "additive" | "subtractive" | "combination",
+      "construction_details": "e.g., cylinder with 5 cylinders subtracted at perimeter for lobed grip"
+    }
+  ],
+  "assembly_order": ["part1", "part2", "part3"],
+  "spatial_analysis": {
+    "viewing_angle": "front" | "side" | "top" | "isometric" | "oblique" | "multiple_views",
+    "symmetry_detected": ["reflection_X", "reflection_Y", "rotational_6", "none"],
+    "depth_cues_used": ["occlusion", "shadows", "size_gradient"]
+  },
+  "geometry": {
+    "primary_shapes": [
+      {"type": "cyl", "dims": {"h": 15, "d": 42}, "position": "center", "notes": "main grip body", "construction": "difference - subtract 5 cylinders for lobed effect"}
+    ],
+    "operations": ["difference for lobed grip", "union for assembly"],
+    "features": [
+      {"type": "lobed_grip", "lobes": 5, "method": "cylinder_subtraction", "notes": "finger recesses"}
+    ]
+  },
+  "dimensions": {
+    "overall": {"length": 50, "width": 30, "height": 20, "estimated": false},
+    "features": {}
+  },
+  "bosl2_functions_needed": ["cyl", "difference", "zrot_copies", "union", "cuboid"],
   "confidence": "high" | "medium" | "low",
   "ambiguities": []
 }
@@ -991,6 +1154,58 @@ difference() {
 - Finger grips: zrot_copies() with small cyl() subtractions
 
 # OUTPUT FORMAT
+
+Return ONLY valid OpenSCAD code. No markdown, no explanations, no code fences.
+Start directly with: include <BOSL2/std.scad>`,
+  },
+
+  'v2.1': {
+    description:
+      'Code generation v2.1 - uses shared prompts for comprehensive BOSL2 guidance',
+    created: '2026-01-18',
+    content: `${OUTPUT_FORMAT}
+
+${BOSL2_LIBRARY_INSTRUCTIONS}
+
+${CODE_STRUCTURE_REQUIREMENTS}
+
+${TECHNICAL_DRAWING_GUIDE}
+
+${IMAGE_INTERPRETATION_GUIDE}
+
+${CODE_EXAMPLES}
+
+# VLM ANALYSIS CONTEXT (ADVISORY)
+
+The following VLM analysis provides context. You must verify it against the image.
+If the analysis conflicts with what you observe, TRUST YOUR VISUAL ANALYSIS.
+
+{VLM_DESCRIPTION}
+
+# CRITICAL INSTRUCTIONS
+
+1. **Visual Match Priority**: Generate code that VISUALLY MATCHES the image
+2. **VLM is Advisory**: If VLM says "star-shaped" but you see lobed grip with rounded recesses, use cylinder subtraction
+3. **Multi-Part Assembly**: If image shows distinct parts (different colors/materials), create separate modules
+4. **Construction Approach**: Use the correct construction method (additive vs subtractive)
+
+# LOBED GRIP PATTERN (CRITICAL)
+
+If you see a grip with rounded INWARD curves (finger recesses):
+\`\`\`openscad
+module lobed_grip(lobes=5, diameter=42, cutout_d=18, height=12) {
+  cutout_offset = diameter/2 + cutout_d/3.5;
+  difference() {
+    cyl(h=height, d=diameter, anchor=BOTTOM, $fn=64);
+    zrot_copies(n=lobes)
+      right(cutout_offset)
+        cyl(h=height+2, d=cutout_d, anchor=CENTER, $fn=48);
+  }
+}
+\`\`\`
+DO NOT use star() for this - star() creates pointed outward protrusions!
+
+# OUTPUT
 
 Return ONLY valid OpenSCAD code. No markdown, no explanations, no code fences.
 Start directly with: include <BOSL2/std.scad>`,

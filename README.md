@@ -14,7 +14,6 @@ This fork adds several enhancements to the original CADAM project:
 
 ### New Features
 
-- **Multi-Modal Agentic Workflow** - Vision-to-SCAD pipeline that converts images to OpenSCAD code using VLM analysis with inflection points for user review
 - **STEP File Export** - Export models to STEP format via FreeCAD Docker service for CAD tool compatibility (Fusion 360, SolidWorks, etc.)
 - **Real-Time Compilation Events** - Streaming compilation feedback showing library loading, render progress, timing, and detailed errors
 - **Code Panel with Source Mapping** - Click-to-code navigation linking 3D geometry back to OpenSCAD source lines

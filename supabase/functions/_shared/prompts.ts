@@ -7,7 +7,7 @@ import type { OutputMode } from '@shared/types.ts';
 // BOSL2 Library Instructions
 // =============================================================================
 
-const BOSL2_LIBRARY_INSTRUCTIONS = `
+export const BOSL2_LIBRARY_INSTRUCTIONS = `
 # BOSL2 Library (Required)
 
 Always use BOSL2 for all models. Include it at the top of every file:
@@ -113,6 +113,58 @@ linear_extrude(height=5)
 - Instead of linear_extrude() square() → use cuboid()
 - Instead of hull() of circles → use prismoid() or cuboid() with rounding
 
+## Shape Construction Patterns
+
+### Lobed/Ergonomic Grips (Concave Recesses)
+For finger grips, knurled knobs, or scalloped edges with ROUNDED INWARD curves:
+\`\`\`openscad
+// Creates a grip with rounded finger recesses via cylinder subtraction
+module lobed_grip(lobes=5, diameter=45, cutout_d=18, height=15) {
+  cutout_offset = diameter/2 + cutout_d/3.5;  // Position cutouts at edge
+  difference() {
+    cyl(h=height, d=diameter, anchor=BOTTOM, $fn=64);
+    // Subtract cylinders around the perimeter for lobed effect
+    zrot_copies(n=lobes)
+      right(cutout_offset)
+        cyl(h=height+2, d=cutout_d, anchor=CENTER, $fn=48);
+  }
+}
+\`\`\`
+**CRITICAL**: DO NOT use star() for lobed grips - star() creates pointed OUTWARD protrusions, not rounded inward recesses.
+
+### Star Shapes (Convex Outward Points)
+For decorative stars with SHARP OUTWARD points only:
+\`\`\`openscad
+// star() is a 2D primitive - MUST extrude for 3D
+linear_extrude(height=5)
+  star(n=6, r=30, ir=15);  // 6-pointed star
+\`\`\`
+
+### Knurling/Grip Texture (Radial Pattern)
+For grip ridges around a cylinder perimeter:
+\`\`\`openscad
+module knurled_grip(d=30, h=20, ridges=24, ridge_depth=1.5) {
+  difference() {
+    cyl(h=h, d=d, anchor=BOTTOM, $fn=64);
+    // Subtract radial grooves for grip texture
+    zrot_copies(n=ridges)
+      right(d/2)
+        cuboid([ridge_depth*2, ridge_depth, h+1], anchor=CENTER);
+  }
+}
+\`\`\`
+
+### Cross/Plus Shape (Not a Star)
+For cross or plus-sign shapes, build from cuboids:
+\`\`\`openscad
+module cross_shape(arm_length=40, arm_width=15, height=10) {
+  union() {
+    cuboid([arm_length, arm_width, height], anchor=CENTER);  // Horizontal arm
+    cuboid([arm_width, arm_length, height], anchor=CENTER);  // Vertical arm
+  }
+}
+\`\`\`
+
 ## Rounding Validation Checklist
 
 Before writing any cuboid/prismoid with rounding, verify:
@@ -132,7 +184,7 @@ Example validations:
 // Output Mode Instructions
 // =============================================================================
 
-const PRINTABLE_MODE_INSTRUCTIONS = `
+export const PRINTABLE_MODE_INSTRUCTIONS = `
 # Output Mode: 3D Printable
 
 Generate manifold, watertight geometry suitable for FDM/SLA printing:
@@ -143,7 +195,7 @@ Generate manifold, watertight geometry suitable for FDM/SLA printing:
 - Use union() to merge parts into single solid
 `;
 
-const ASSEMBLY_MODE_INSTRUCTIONS = `
+export const ASSEMBLY_MODE_INSTRUCTIONS = `
 # Output Mode: Multi-Part Assembly
 
 Generate separate components for visualization:
@@ -164,7 +216,7 @@ up(base_height + 0.3) cover();  // Small gap for visibility
 // Code Structure Requirements
 // =============================================================================
 
-const CODE_STRUCTURE_REQUIREMENTS = `
+export const CODE_STRUCTURE_REQUIREMENTS = `
 # Code Structure (Required)
 
 ## Module Organization
@@ -218,13 +270,51 @@ module front_housing() { ... }
 // Rear mounting plate - from rear view (orange in drawing)
 module rear_plate() { ... }
 \`\`\`
+
+## Multi-Part Assembly Organization
+
+When an object has visually distinct components (different colors, materials, or functions):
+
+1. **Identify each part**: Housing, knob, plate, shaft, etc.
+2. **Create separate modules**: One module per distinct component
+3. **Use color() for visualization**: Different colors help identify parts
+4. **Stack with proper positioning**: Use up(), translate() for assembly
+
+Example structure:
+\`\`\`openscad
+// === MODULE: Rear Housing (black part) ===
+module rear_housing() {
+  color("DimGray") cyl(h=housing_h, d=housing_d, anchor=BOTTOM);
+}
+
+// === MODULE: Main Body (colored part) ===
+module main_body() {
+  color("RoyalBlue") cyl(h=body_h, d=body_d, anchor=BOTTOM);
+}
+
+// === MODULE: Top Plate (metallic part) ===
+module top_plate() {
+  color("Silver") cyl(h=plate_h, d=plate_d, anchor=BOTTOM);
+}
+
+// === ASSEMBLY ===
+rear_housing();
+up(housing_h) main_body();
+up(housing_h + body_h) top_plate();
+\`\`\`
+
+This approach enables:
+- Clear separation of concerns
+- Easy modification of individual parts
+- Color-coded visualization
+- Click-to-highlight in 3D viewers
 `;
 
 // =============================================================================
 // Technical Drawing Interpretation
 // =============================================================================
 
-const TECHNICAL_DRAWING_GUIDE = `
+export const TECHNICAL_DRAWING_GUIDE = `
 # Technical Drawing Interpretation
 
 When analyzing engineering drawings with multiple orthographic views:
@@ -272,7 +362,7 @@ For thin features (< 5mm):
 // Image Interpretation Guide
 // =============================================================================
 
-const IMAGE_INTERPRETATION_GUIDE = `
+export const IMAGE_INTERPRETATION_GUIDE = `
 # Image/Sketch Interpretation
 
 ## Image Type Classification
@@ -321,7 +411,7 @@ const IMAGE_INTERPRETATION_GUIDE = `
 // Output Format Instructions
 // =============================================================================
 
-const OUTPUT_FORMAT = `
+export const OUTPUT_FORMAT = `
 # Output Format
 
 Return ONLY valid OpenSCAD code. No markdown, no explanations, no code fences.
@@ -351,7 +441,7 @@ The response should start with \`include <BOSL2/std.scad>\` and contain only Ope
 // Code Examples
 // =============================================================================
 
-const CODE_EXAMPLES = `
+export const CODE_EXAMPLES = `
 # Examples
 
 ## Example 1: Parametric Adapter
@@ -503,6 +593,105 @@ hdmi_body();
 back(80) dp_body();
 back(160) { vga_body(); vga_rear_plate(); }
 \`\`\`
+
+## Example 4: Multi-Part Tool with Lobed Grip
+
+Given: Photo of ratchet tool with blue finger grip (lobed/scalloped), black housing with ridges, silver locking plate, and drive stud.
+
+\`\`\`openscad
+include <BOSL2/std.scad>
+
+// ============================================================
+// PARAMETERS
+// ============================================================
+
+// Rear Housing (black part with grip ridges)
+housing_d = 30;
+housing_h = 8;
+housing_ridges = 12;
+housing_ridge_depth = 1.5;
+
+// Finger Grip Knob (blue lobed part)
+grip_d = 42;
+grip_h = 12;
+grip_lobes = 5;
+grip_cutout_d = 18;  // Diameter of cylinders subtracted for lobed effect
+
+// Locking Plate (silver metallic)
+plate_d = 20;
+plate_h = 1;
+plate_tab_w = 3;
+
+// Drive Stud (dark metal)
+drive_size = 9.53;  // 3/8" = 9.53mm
+drive_length = 10;
+
+// ============================================================
+// MODULE: Rear Housing with Grip Ridges
+// ============================================================
+module rear_housing() {
+  color("DimGray")
+  difference() {
+    cyl(h=housing_h, d=housing_d, rounding=1, edges=BOTTOM, anchor=BOTTOM, $fn=64);
+    // Subtract radial grooves for grip texture
+    zrot_copies(n=housing_ridges)
+      right(housing_d/2)
+        cuboid([housing_ridge_depth*2, housing_ridge_depth, housing_h+1], anchor=CENTER);
+  }
+}
+
+// ============================================================
+// MODULE: Lobed Finger Grip (CRITICAL: cylinder subtraction, NOT star!)
+// ============================================================
+module finger_grip() {
+  // Position cutout cylinders at the edge to create lobed effect
+  cutout_offset = grip_d/2 + grip_cutout_d/3.5;
+
+  color("RoyalBlue")
+  difference() {
+    cyl(h=grip_h, d=grip_d, chamfer=2, anchor=BOTTOM, $fn=64);
+    // Subtract cylinders around perimeter for finger recesses
+    zrot_copies(n=grip_lobes)
+      right(cutout_offset)
+        cyl(h=grip_h+2, d=grip_cutout_d, anchor=CENTER, $fn=48);
+  }
+}
+
+// ============================================================
+// MODULE: Locking Plate with Tabs
+// ============================================================
+module locking_plate() {
+  color("Silver")
+  union() {
+    cyl(h=plate_h, d=plate_d, anchor=BOTTOM, $fn=64);
+    // Cross-shaped tabs
+    zrot_copies(n=2)
+      cuboid([plate_d+2, plate_tab_w, plate_h], anchor=BOTTOM);
+  }
+}
+
+// ============================================================
+// MODULE: Square Drive Stud
+// ============================================================
+module drive_stud() {
+  color("#222")
+  cuboid([drive_size, drive_size, drive_length], rounding=1, edges="Z", anchor=BOTTOM);
+}
+
+// ============================================================
+// ASSEMBLY - Stack parts vertically
+// ============================================================
+rear_housing();
+up(housing_h) finger_grip();
+up(housing_h + grip_h) locking_plate();
+up(housing_h + grip_h + plate_h) drive_stud();
+\`\`\`
+
+**Key patterns demonstrated:**
+- Lobed grip via \`zrot_copies()\` + \`cyl()\` subtraction (NOT star()!)
+- Multi-part assembly with separate colored modules
+- Knurling via radial cuboid subtraction
+- Proper use of BOSL2 anchors and transforms
 `;
 
 // =============================================================================

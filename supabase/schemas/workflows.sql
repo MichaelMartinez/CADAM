@@ -1,5 +1,6 @@
 -- Workflow system tables for multi-modal agentic workflows
--- Supports vision-to-scad, verification loops, and other workflow types
+-- Supports verification loops and other workflow types
+-- Note: vision-to-scad was removed - use one-shot chat for image-to-CAD conversion (better results, lower cost)
 
 -- Main workflows table
 CREATE TABLE IF NOT EXISTS "public"."workflows" (
@@ -15,7 +16,6 @@ CREATE TABLE IF NOT EXISTS "public"."workflows" (
     "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
     CONSTRAINT "workflows_type_check" CHECK (("workflow_type" = ANY (ARRAY[
-        'vision-to-scad'::"text",
         'verification-loop'::"text",
         'assembly-explode'::"text",
         'multi-angle-optimize'::"text"

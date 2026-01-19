@@ -6,7 +6,7 @@
  * metadata for UI components.
  */
 
-import { Wand2, Eye, Layers, Camera, LucideIcon } from 'lucide-react';
+import { Eye, Layers, Camera, LucideIcon } from 'lucide-react';
 import type { WorkflowType } from '@shared/workflowTypes';
 
 // =============================================================================
@@ -38,17 +38,8 @@ export type WorkflowMode = 'chat' | WorkflowType;
 // Registry
 // =============================================================================
 
+// Note: vision-to-scad was removed - use one-shot chat for image-to-CAD conversion (better results, lower cost)
 export const WORKFLOW_REGISTRY: WorkflowDefinition[] = [
-  {
-    id: 'vision-to-scad',
-    label: 'Vision to CAD',
-    description: 'Convert images to OpenSCAD code using AI vision analysis',
-    icon: Wand2,
-    requiresImages: true,
-    requiresMesh: false,
-    available: true,
-    status: 'beta',
-  },
   {
     id: 'verification-loop',
     label: 'Verify & Iterate',

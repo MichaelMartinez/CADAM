@@ -8,5 +8,3 @@ export type {
   StepResult,
   InflectionPointRequest,
 } from './WorkflowPipeline.ts';
-
-export { VisionToScadPipeline } from './VisionToScadPipeline.ts';
