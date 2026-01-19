@@ -1,5 +1,5 @@
 import { Link, useNavigate } from 'react-router-dom';
-import { Plus, LayoutGrid } from 'lucide-react';
+import { Plus, LayoutGrid, Box } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Tooltip,
@@ -162,6 +162,7 @@ export function Sidebar({ isSidebarOpen }: SidebarProps) {
             </div>
           </ConditionalWrapper>
           <nav className="space-y-1">
+            {/* Creations Section */}
             {[
               {
                 icon: LayoutGrid,
@@ -225,6 +226,54 @@ export function Sidebar({ isSidebarOpen }: SidebarProps) {
                     )}
                   </ul>
                 )}
+              </div>
+            ))}
+
+            {/* Tools Section */}
+            {isSidebarOpen && (
+              <div className="mt-4 border-t border-adam-neutral-700 pt-3">
+                <span className="mb-2 block px-2 text-xs font-medium uppercase tracking-wider text-adam-neutral-500">
+                  Tools
+                </span>
+              </div>
+            )}
+            {[
+              {
+                icon: Box,
+                label: 'Mold Generator',
+                href: '/mold-generator',
+                description: 'Generate molds from STL files',
+              },
+            ].map(({ icon: Icon, label, href, description }) => (
+              <div key={label} className="space-y-1">
+                <ConditionalWrapper
+                  condition={!isSidebarOpen}
+                  wrapper={(children) => (
+                    <Tooltip>
+                      <TooltipTrigger asChild>{children}</TooltipTrigger>
+                      <TooltipContent side="right" className="flex flex-col">
+                        <span className="font-semibold">{label}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {description}
+                        </span>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                >
+                  <Link to={href}>
+                    <Button
+                      variant={
+                        isSidebarOpen ? 'adam_dark' : 'adam_dark_collapsed'
+                      }
+                      className={`${isSidebarOpen ? 'w-full justify-start' : 'ml-[1px] h-[46px] w-[46px] p-0'}`}
+                    >
+                      <Icon
+                        className={`${isSidebarOpen ? 'mr-2' : ''} h-[22px] w-[22px] min-w-[22px]`}
+                      />
+                      {isSidebarOpen && label}
+                    </Button>
+                  </Link>
+                </ConditionalWrapper>
               </div>
             ))}
           </nav>
