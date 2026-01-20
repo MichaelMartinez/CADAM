@@ -218,6 +218,138 @@ Deno.serve(async (req) => {
       });
     }
 
+    // POST /step-converter/analyze-mesh - Analyze STL mesh for moldability
+    if (req.method === 'POST' && action === 'analyze-mesh') {
+      // Forward multipart form data directly to the service
+      const formData = await req.formData();
+
+      // Prepare headers for forwarding (no Content-Type - let fetch set it for FormData)
+      const headers = new Headers();
+      if (STEP_CONVERTER_SECRET) {
+        headers.set('Authorization', `Bearer ${STEP_CONVERTER_SECRET}`);
+      }
+
+      const response = await fetch(`${STEP_CONVERTER_URL}/analyze-mesh`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({ detail: 'Analysis failed' }));
+        return new Response(
+          JSON.stringify({ error: errorData.detail || 'Analysis failed' }),
+          {
+            status: response.status,
+            headers: {
+              ...extendedCorsHeaders,
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+      }
+
+      const data = await response.json();
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: {
+          ...extendedCorsHeaders,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
+    // POST /step-converter/generate-mold - Generate mold from STL
+    if (req.method === 'POST' && action === 'generate-mold') {
+      const formData = await req.formData();
+
+      const headers = new Headers();
+      if (STEP_CONVERTER_SECRET) {
+        headers.set('Authorization', `Bearer ${STEP_CONVERTER_SECRET}`);
+      }
+
+      const response = await fetch(`${STEP_CONVERTER_URL}/generate-mold`, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({ detail: 'Mold generation failed' }));
+        return new Response(
+          JSON.stringify({
+            error: errorData.detail || 'Mold generation failed',
+          }),
+          {
+            status: response.status,
+            headers: {
+              ...extendedCorsHeaders,
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+      }
+
+      const data = await response.json();
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: {
+          ...extendedCorsHeaders,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
+    // POST /step-converter/analyze-and-generate - Combined analysis + generation
+    if (req.method === 'POST' && action === 'analyze-and-generate') {
+      const formData = await req.formData();
+
+      const headers = new Headers();
+      if (STEP_CONVERTER_SECRET) {
+        headers.set('Authorization', `Bearer ${STEP_CONVERTER_SECRET}`);
+      }
+
+      const response = await fetch(
+        `${STEP_CONVERTER_URL}/analyze-and-generate`,
+        {
+          method: 'POST',
+          headers,
+          body: formData,
+        },
+      );
+
+      if (!response.ok) {
+        const errorData = await response
+          .json()
+          .catch(() => ({ detail: 'Analysis and generation failed' }));
+        return new Response(
+          JSON.stringify({
+            error: errorData.detail || 'Analysis and generation failed',
+          }),
+          {
+            status: response.status,
+            headers: {
+              ...extendedCorsHeaders,
+              'Content-Type': 'application/json',
+            },
+          },
+        );
+      }
+
+      const data = await response.json();
+      return new Response(JSON.stringify(data), {
+        status: 200,
+        headers: {
+          ...extendedCorsHeaders,
+          'Content-Type': 'application/json',
+        },
+      });
+    }
+
     // Unknown route
     return new Response(JSON.stringify({ error: 'Not found' }), {
       status: 404,

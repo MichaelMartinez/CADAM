@@ -30,12 +30,27 @@ RUN pip3 install --no-cache-dir \
     uvicorn[standard]==0.27.0 \
     python-multipart==0.0.6
 
+# Install mesh analysis dependencies
+RUN pip3 install --no-cache-dir \
+    trimesh==4.5.3 \
+    shapely==2.0.6 \
+    scipy==1.14.1 \
+    numpy==1.26.4 \
+    rtree==1.3.0
+
+# Install Build123D for mold generation (OpenCascade-based CAD)
+# This provides cleaner API than raw FreeCAD for programmatic geometry
+RUN pip3 install --no-cache-dir \
+    build123d==0.10.0
+
 # Create app directory
 WORKDIR /app
 
 # Copy conversion scripts
 COPY converter.py /app/
 COPY main.py /app/
+COPY mesh_analysis.py /app/
+COPY mold_generator.py /app/
 
 # Create temp directory for conversions
 RUN mkdir -p /tmp/conversions

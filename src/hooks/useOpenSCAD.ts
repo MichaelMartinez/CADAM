@@ -186,8 +186,34 @@ export function useOpenSCAD(options?: UseOpenSCADOptions) {
     [getWorker],
   );
 
+  // Cancel a running compilation by terminating the worker
+  // This is the only way to stop a blocking callMain() in OpenSCAD WASM
+  const cancelCompilation = useCallback(() => {
+    if (!workerRef.current) return;
+
+    // Terminate the current worker (stops any blocking operation)
+    workerRef.current.terminate();
+    workerRef.current = null;
+
+    // Clear tracked files since worker filesystem is gone
+    writtenFilesRef.current.clear();
+
+    // Reject any pending requests
+    pendingRequestsRef.current.forEach((pending) => {
+      pending.reject(new Error('Compilation cancelled'));
+    });
+    pendingRequestsRef.current.clear();
+
+    // Reset state
+    setIsCompiling(false);
+    setError(new Error('Compilation cancelled by user'));
+    setIsError(true);
+    setOutput(undefined);
+  }, []);
+
   return {
     compileScad,
+    cancelCompilation,
     writeFile,
     unlinkFile,
     hasFile,

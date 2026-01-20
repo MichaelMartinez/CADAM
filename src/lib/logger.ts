@@ -36,6 +36,7 @@ const STYLES = {
   api: 'background: #ec4899; color: white;',
   auth: 'background: #f97316; color: white;',
   storage: 'background: #06b6d4; color: white;',
+  mold: 'background: #84cc16; color: black;',
 
   // Content styles
   content: 'color: inherit;',
@@ -49,6 +50,7 @@ const COMPONENT_STYLES: Record<string, string> = {
   API: STYLES.api,
   Auth: STYLES.auth,
   Storage: STYLES.storage,
+  Mold: STYLES.mold,
 };
 
 const config: LoggerConfig = {
@@ -177,6 +179,7 @@ export const screenshotLogger = createLogger('Screenshot');
 export const apiLogger = createLogger('API');
 export const authLogger = createLogger('Auth');
 export const storageLogger = createLogger('Storage');
+export const moldLogger = createLogger('Mold');
 
 // Configure logger at runtime
 export function configureLogger(options: Partial<LoggerConfig>) {

@@ -77,6 +77,12 @@ class OpenSCADWrapper {
       console.error('Error setting up fonts', error);
     }
 
+    // Debug: Log files to be written
+    console.log(
+      '[OpenSCAD] Files in queue:',
+      this.files.map((f) => ({ path: f.path, size: f.size })),
+    );
+
     for (const file of this.files) {
       // Make sure the directory of the file exists
       if (file.path) {
@@ -89,7 +95,23 @@ class OpenSCADWrapper {
         }
 
         const content = await file.arrayBuffer();
+        console.log(
+          `[OpenSCAD] Writing file: ${file.path}, size: ${content.byteLength} bytes`,
+        );
         instance.FS.writeFile(file.path, new Int8Array(content));
+
+        // Verify the file was written
+        try {
+          const stat = instance.FS.stat(file.path) as { size: number };
+          console.log(
+            `[OpenSCAD] File verified: ${file.path}, size on disk: ${stat.size} bytes`,
+          );
+        } catch (e) {
+          console.error(
+            `[OpenSCAD] File NOT found after write: ${file.path}`,
+            e,
+          );
+        }
       }
     }
 

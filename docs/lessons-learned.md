@@ -701,3 +701,127 @@ cuboid([1.5, 60, 40]);  // OK
 ```
 
 ---
+
+## Docker / step-converter Service
+
+### BuildKit Errors When Building Docker Image
+
+**Symptom:**
+
+```
+failed to fetch metadata: exit status 1
+ERROR: BuildKit is enabled but the buildx component is missing or broken.
+```
+
+**Cause:** Docker's BuildKit/buildx component is not properly installed or missing on the system.
+
+**Solution:** Use the legacy Docker builder by disabling BuildKit:
+
+```bash
+DOCKER_BUILDKIT=0 docker build -t step-converter:latest .
+```
+
+**Note:** This only affects the build step. `docker compose up -d` works fine with the pre-built image.
+
+**Related files:**
+
+- `services/step-converter/README.md` - Build documentation
+
+---
+
+### External Docker Network Not Found
+
+**Symptom:**
+
+```
+network supabase_network_cadam declared as external, but could not be found
+```
+
+**Cause:** The docker-compose.yml declares `supabase_network_cadam` as an external network that must exist before starting the container.
+
+**Solution:** Create the network before running docker compose:
+
+```bash
+docker network create supabase_network_cadam
+docker compose up -d
+```
+
+---
+
+## Build123D / OpenCascade (OCP)
+
+### import_stl() Returns Face, Not Solid
+
+**Symptom:** Segmentation fault (exit code 139) when performing boolean operations on an imported STL mesh.
+
+**Cause:** Build123D's `import_stl()` function returns a `Face` object, not a `Solid`. When you try to use this Face in boolean operations (like `add(..., mode=Mode.SUBTRACT)`), the OpenCascade kernel may crash with a segfault.
+
+```python
+# WRONG - causes segfault
+from build123d import import_stl, BuildPart, Box, add, Mode
+
+stl_shape = import_stl('/path/to/file.stl')
+print(type(stl_shape))  # <class 'build123d.topology.two_d.Face'>  <-- NOT a Solid!
+
+with BuildPart() as p:
+    Box(20, 20, 20)
+    add(stl_shape, mode=Mode.SUBTRACT)  # CRASH!
+```
+
+**Solution:** Use OCP's `StlAPI_Reader` + `BRepBuilderAPI_Sewing` + `BRepBuilderAPI_MakeSolid` to properly convert STL meshes to Solids:
+
+```python
+from build123d import Solid
+from OCP.StlAPI import StlAPI_Reader
+from OCP.TopoDS import TopoDS_Shape, TopoDS
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
+
+def mesh_to_solid(stl_path: str) -> Solid:
+    # Read STL as compound of faces
+    reader = StlAPI_Reader()
+    shape = TopoDS_Shape()
+    reader.Read(shape, stl_path)
+
+    # Sew faces into a shell
+    sew = BRepBuilderAPI_Sewing(1e-6)
+    sew.Add(shape)
+    sew.Perform()
+    sewn = sew.SewedShape()
+
+    # Convert shell to solid
+    shell = TopoDS.Shell_s(sewn)
+    builder = BRepBuilderAPI_MakeSolid()
+    builder.Add(shell)
+    return Solid(builder.Solid())
+```
+
+**Note:** Always call `trimesh.fix_normals()` on the mesh before exporting to STL for OCP import, otherwise the solid may have inverted volume.
+
+**Related files:**
+
+- `services/step-converter/mold_generator.py` - `mesh_to_solid_build123d()` function
+
+---
+
+### Build123D Kind Enum Usage
+
+**Symptom:** `KeyError: 'intersection'` when using `offset()` function.
+
+**Cause:** Build123D's `offset()` function requires the `Kind` enum, not a string.
+
+```python
+# WRONG - string argument
+offset(amount=-0.4, kind="intersection")  # KeyError!
+
+# CORRECT - enum value
+from build123d import Kind
+offset(amount=-0.4, kind=Kind.INTERSECTION)
+```
+
+**Valid Kind values:** `Kind.ARC`, `Kind.INTERSECTION`, `Kind.TANGENT`
+
+**Related files:**
+
+- `services/step-converter/mold_generator.py` - Uses `Kind.INTERSECTION` for offset operations
+
+---

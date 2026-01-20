@@ -15,12 +15,16 @@ import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase, isGodMode } from '@/lib/supabase';
 import { parseSTL, isValidSTL } from '@/utils/meshUtils';
-import type { STLSource, BoundingBox } from '@/types/mold';
+import type { STLSource, BoundingBox, MeshCenter } from '@/types/mold';
 import type { Conversation } from '@shared/types';
 
 interface STLSourcePickerProps {
   value: STLSource | null;
-  onChange: (source: STLSource, boundingBox: BoundingBox) => void;
+  onChange: (
+    source: STLSource,
+    boundingBox: BoundingBox,
+    meshCenter: MeshCenter,
+  ) => void;
   disabled?: boolean;
 }
 
@@ -101,14 +105,18 @@ export function STLSourcePicker({
 
       setIsProcessing(true);
       try {
-        const { boundingBox } = await parseSTL(file);
+        const { boundingBox, meshCenter } = await parseSTL(file);
         const safeFilename =
           file.name
             .toLowerCase()
             .replace(/[^a-z0-9._-]/g, '_')
             .replace(/\.stl$/i, '') + '.stl';
 
-        onChange({ type: 'upload', file, filename: safeFilename }, boundingBox);
+        onChange(
+          { type: 'upload', file, filename: safeFilename },
+          boundingBox,
+          meshCenter,
+        );
       } catch (error) {
         console.error('Error parsing STL:', error);
         toast({
@@ -137,11 +145,11 @@ export function STLSourcePicker({
 
         if (error) throw error;
 
-        // Parse to get bounding box
+        // Parse to get bounding box and mesh center
         const file = new File([blob], conv.meshFilename, {
           type: 'model/stl',
         });
-        const { boundingBox } = await parseSTL(file);
+        const { boundingBox, meshCenter } = await parseSTL(file);
 
         onChange(
           {
@@ -151,6 +159,7 @@ export function STLSourcePicker({
             filename: conv.meshFilename,
           },
           boundingBox,
+          meshCenter,
         );
       } catch (error) {
         console.error('Error loading mesh from creation:', error);
@@ -233,6 +242,7 @@ export function STLSourcePicker({
                 onChange(
                   null as unknown as STLSource,
                   null as unknown as BoundingBox,
+                  null as unknown as MeshCenter,
                 )
               }
               disabled={disabled}

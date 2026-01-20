@@ -2,9 +2,11 @@
  * Mold Config Panel
  *
  * Form component for configuring mold generation parameters.
+ * Includes all options for professional mold design.
  */
 
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
+import { AlertTriangle, Lightbulb } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -18,8 +20,77 @@ import type {
   MoldType,
   MoldShape,
   SplitAxis,
+  KeyType,
+  PourHolePosition,
   BoundingBox,
 } from '@/types/mold';
+
+/**
+ * Analyze part dimensions and recommend the best split axis
+ */
+function analyzeSplitAxis(bbox: BoundingBox): {
+  recommended: SplitAxis;
+  reason: string;
+  warnings: string[];
+} {
+  const { x, y, z } = bbox;
+  const warnings: string[] = [];
+
+  // Find the smallest dimension - splitting along this axis gives
+  // the shallowest mold halves, which is easier to demold
+  const dims = [
+    { axis: 'x' as SplitAxis, value: x, label: 'X (width)' },
+    { axis: 'y' as SplitAxis, value: y, label: 'Y (depth)' },
+    { axis: 'z' as SplitAxis, value: z, label: 'Z (height)' },
+  ];
+
+  // Sort by dimension value
+  dims.sort((a, b) => a.value - b.value);
+  const smallest = dims[0];
+  const largest = dims[2];
+
+  // Check for very thin parts (aspect ratio > 10:1)
+  if (largest.value / smallest.value > 10) {
+    warnings.push(
+      `Very thin part detected (${(largest.value / smallest.value).toFixed(1)}:1 aspect ratio). Consider if a mold is the best approach.`,
+    );
+  }
+
+  // Check for very small parts
+  if (Math.max(x, y, z) < 10) {
+    warnings.push(
+      'Part is quite small. Registration keys and vents may be difficult to work with at this scale.',
+    );
+  }
+
+  // Z is often preferred because:
+  // 1. Pour hole is at top (gravity helps)
+  // 2. Air vents work better (air rises)
+  // 3. Most 3D printers print on XY plane, so Z-split aligns with print orientation
+  if (z <= Math.min(x, y) * 1.5) {
+    return {
+      recommended: 'z',
+      reason:
+        'Z-axis (horizontal split) is recommended for this part shape. This works best for pouring and air venting.',
+      warnings,
+    };
+  }
+
+  // If Z is much larger than X and Y, recommend splitting along X or Y
+  if (x <= y) {
+    return {
+      recommended: 'x',
+      reason: `X-axis split recommended because the part is tall (${z.toFixed(0)}mm) relative to width (${x.toFixed(0)}mm).`,
+      warnings,
+    };
+  }
+
+  return {
+    recommended: 'y',
+    reason: `Y-axis split recommended because the part is tall (${z.toFixed(0)}mm) relative to depth (${y.toFixed(0)}mm).`,
+    warnings,
+  };
+}
 
 interface MoldConfigPanelProps {
   config: MoldConfig;
@@ -34,6 +105,12 @@ export function MoldConfigPanel({
   boundingBox,
   disabled = false,
 }: MoldConfigPanelProps) {
+  // Analyze the part and get recommendations
+  const splitAnalysis = useMemo(() => {
+    if (!boundingBox) return null;
+    return analyzeSplitAxis(boundingBox);
+  }, [boundingBox]);
+
   // Auto-calculate dimensions when bounding box or relevant config changes
   useEffect(() => {
     if (boundingBox && config.dimensions.autoCalculated) {
@@ -49,7 +126,13 @@ export function MoldConfigPanel({
         });
       }
     }
-  }, [boundingBox, config.wallThickness, config.splitAxis]);
+  }, [
+    boundingBox,
+    config.wallThickness,
+    config.splitAxis,
+    config.enableClampingTabs,
+    config.clampTabSize,
+  ]);
 
   const updateConfig = <K extends keyof MoldConfig>(
     key: K,
@@ -60,6 +143,22 @@ export function MoldConfigPanel({
 
   return (
     <div className="space-y-6">
+      {/* Part Analysis and Warnings */}
+      {splitAnalysis && splitAnalysis.warnings.length > 0 && (
+        <Card className="border-adam-orange/30 bg-adam-orange/10 p-3">
+          <div className="flex gap-2">
+            <AlertTriangle className="text-adam-orange h-4 w-4 flex-shrink-0" />
+            <div className="space-y-1">
+              {splitAnalysis.warnings.map((warning, i) => (
+                <p key={i} className="text-adam-orange text-xs">
+                  {warning}
+                </p>
+              ))}
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* Mold Type */}
       <div className="space-y-2">
         <Label className="text-sm font-medium text-adam-text-secondary">
@@ -151,14 +250,23 @@ export function MoldConfigPanel({
           disabled={disabled}
           className="justify-start"
         >
-          <ToggleGroupItem value="x" className="px-4">
-            X
+          <ToggleGroupItem
+            value="x"
+            className={`px-4 ${splitAnalysis?.recommended === 'x' ? 'ring-adam-green ring-1' : ''}`}
+          >
+            X {splitAnalysis?.recommended === 'x' && '✓'}
           </ToggleGroupItem>
-          <ToggleGroupItem value="y" className="px-4">
-            Y
+          <ToggleGroupItem
+            value="y"
+            className={`px-4 ${splitAnalysis?.recommended === 'y' ? 'ring-adam-green ring-1' : ''}`}
+          >
+            Y {splitAnalysis?.recommended === 'y' && '✓'}
           </ToggleGroupItem>
-          <ToggleGroupItem value="z" className="px-4">
-            Z
+          <ToggleGroupItem
+            value="z"
+            className={`px-4 ${splitAnalysis?.recommended === 'z' ? 'ring-adam-green ring-1' : ''}`}
+          >
+            Z {splitAnalysis?.recommended === 'z' && '✓'}
           </ToggleGroupItem>
         </ToggleGroup>
         <p className="text-xs text-adam-neutral-500">
@@ -168,6 +276,13 @@ export function MoldConfigPanel({
               ? 'Vertical split (left/right halves)'
               : 'Vertical split (front/back halves)'}
         </p>
+        {/* Recommendation */}
+        {splitAnalysis && (
+          <div className="flex gap-2 rounded-md bg-adam-blue/10 p-2">
+            <Lightbulb className="h-4 w-4 flex-shrink-0 text-adam-blue" />
+            <p className="text-xs text-adam-blue">{splitAnalysis.reason}</p>
+          </div>
+        )}
       </div>
 
       {/* Wall Thickness */}
@@ -196,6 +311,32 @@ export function MoldConfigPanel({
           Registration Keys
         </Label>
         <div className="space-y-3">
+          {/* Key Type */}
+          <div className="space-y-1">
+            <span className="text-xs text-adam-neutral-400">Key Type</span>
+            <ToggleGroup
+              type="single"
+              value={config.keyType}
+              onValueChange={(value: KeyType) => {
+                if (value) updateConfig('keyType', value);
+              }}
+              disabled={disabled}
+              className="justify-start"
+            >
+              <ToggleGroupItem value="cone" className="px-3 text-xs">
+                Conical
+              </ToggleGroupItem>
+              <ToggleGroupItem value="sphere" className="px-3 text-xs">
+                Spherical
+              </ToggleGroupItem>
+            </ToggleGroup>
+            <p className="text-xs text-adam-neutral-500">
+              {config.keyType === 'cone'
+                ? 'Conical keys are self-centering and easier to align'
+                : 'Spherical keys (original design)'}
+            </p>
+          </div>
+
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-xs text-adam-neutral-400">Key Size</span>
@@ -206,12 +347,35 @@ export function MoldConfigPanel({
             <Slider
               value={[config.keySize]}
               onValueChange={([value]) => updateConfig('keySize', value)}
-              min={1}
-              max={8}
+              min={2}
+              max={10}
               step={0.5}
               disabled={disabled}
             />
           </div>
+
+          {/* Draft Angle (only for conical keys) */}
+          {config.keyType === 'cone' && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Draft Angle
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.keyDraft}°
+                </span>
+              </div>
+              <Slider
+                value={[config.keyDraft]}
+                onValueChange={([value]) => updateConfig('keyDraft', value)}
+                min={1}
+                max={15}
+                step={1}
+                disabled={disabled}
+              />
+            </div>
+          )}
+
           <div className="space-y-1">
             <div className="flex items-center justify-between">
               <span className="text-xs text-adam-neutral-400">Tolerance</span>
@@ -231,24 +395,120 @@ export function MoldConfigPanel({
         </div>
       </Card>
 
-      {/* Type-specific options */}
+      {/* Air Vents (Standard mold only) */}
+      {config.type === 'standard' && (
+        <Card className="border-adam-neutral-700 bg-adam-background-1 p-3">
+          <div className="mb-3 flex items-center justify-between">
+            <Label className="text-sm font-medium text-adam-text-secondary">
+              Air Vents
+            </Label>
+            <Switch
+              checked={config.enableVents}
+              onCheckedChange={(checked) =>
+                updateConfig('enableVents', checked)
+              }
+              disabled={disabled}
+            />
+          </div>
+          {!config.enableVents && (
+            <p className="text-adam-orange text-xs">
+              Warning: Air vents are strongly recommended for proper casting
+            </p>
+          )}
+          {config.enableVents && (
+            <div className="space-y-3">
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-adam-neutral-400">
+                    Vent Diameter
+                  </span>
+                  <span className="text-xs text-adam-text-primary">
+                    {config.ventDiameter}mm
+                  </span>
+                </div>
+                <Slider
+                  value={[config.ventDiameter]}
+                  onValueChange={([value]) =>
+                    updateConfig('ventDiameter', value)
+                  }
+                  min={0.5}
+                  max={2}
+                  step={0.1}
+                  disabled={disabled}
+                />
+                <p className="text-xs text-adam-neutral-500">
+                  Smaller for viscous materials, larger for thin casting resins
+                </p>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-adam-neutral-400">
+                    Number of Vents
+                  </span>
+                  <span className="text-xs text-adam-text-primary">
+                    {config.ventCount}
+                  </span>
+                </div>
+                <Slider
+                  value={[config.ventCount]}
+                  onValueChange={([value]) => updateConfig('ventCount', value)}
+                  min={2}
+                  max={8}
+                  step={1}
+                  disabled={disabled}
+                />
+              </div>
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* Pour System (Standard mold only) */}
       {config.type === 'standard' && (
         <Card className="border-adam-neutral-700 bg-adam-background-1 p-3">
           <Label className="mb-3 block text-sm font-medium text-adam-text-secondary">
-            Pour Hole
+            Pour System
           </Label>
           <div className="space-y-3">
+            {/* Pour Hole Position */}
+            <div className="space-y-1">
+              <span className="text-xs text-adam-neutral-400">
+                Pour Hole Position
+              </span>
+              <ToggleGroup
+                type="single"
+                value={config.pourHolePosition ?? 'edge'}
+                onValueChange={(value: PourHolePosition) => {
+                  if (value) updateConfig('pourHolePosition', value);
+                }}
+                disabled={disabled}
+                className="justify-start"
+              >
+                <ToggleGroupItem value="edge" className="px-3 text-xs">
+                  Edge
+                </ToggleGroupItem>
+                <ToggleGroupItem value="center" className="px-3 text-xs">
+                  Center
+                </ToggleGroupItem>
+              </ToggleGroup>
+              <p className="text-xs text-adam-neutral-500">
+                {config.pourHolePosition === 'edge'
+                  ? 'Edge positioning allows better air escape during pour'
+                  : 'Center positioning for symmetric parts'}
+              </p>
+            </div>
+
             <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-adam-neutral-400">
-                  Top Diameter
+                  Top Diameter (funnel)
                 </span>
                 <span className="text-xs text-adam-text-primary">
                   {config.pourHoleDiameter}mm
                 </span>
               </div>
               <Slider
-                value={[config.pourHoleDiameter ?? 10]}
+                value={[config.pourHoleDiameter ?? 12]}
                 onValueChange={([value]) =>
                   updateConfig('pourHoleDiameter', value)
                 }
@@ -261,14 +521,14 @@ export function MoldConfigPanel({
             <div className="space-y-1">
               <div className="flex items-center justify-between">
                 <span className="text-xs text-adam-neutral-400">
-                  Bottom Diameter (taper)
+                  Bottom Diameter (sprue)
                 </span>
                 <span className="text-xs text-adam-text-primary">
                   {config.pourHoleTaper}mm
                 </span>
               </div>
               <Slider
-                value={[config.pourHoleTaper ?? 5]}
+                value={[config.pourHoleTaper ?? 6]}
                 onValueChange={([value]) =>
                   updateConfig('pourHoleTaper', value)
                 }
@@ -278,37 +538,316 @@ export function MoldConfigPanel({
                 disabled={disabled}
               />
             </div>
+
+            {/* Overflow Riser */}
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-adam-neutral-400">
+                Overflow Riser
+              </span>
+              <Switch
+                checked={config.enableOverflow ?? false}
+                onCheckedChange={(checked) =>
+                  updateConfig('enableOverflow', checked)
+                }
+                disabled={disabled || config.pourHolePosition === 'center'}
+              />
+            </div>
+            {config.enableOverflow && config.pourHolePosition === 'edge' && (
+              <div className="space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-adam-neutral-400">
+                    Overflow Diameter
+                  </span>
+                  <span className="text-xs text-adam-text-primary">
+                    {config.overflowDiameter}mm
+                  </span>
+                </div>
+                <Slider
+                  value={[config.overflowDiameter ?? 6]}
+                  onValueChange={([value]) =>
+                    updateConfig('overflowDiameter', value)
+                  }
+                  min={3}
+                  max={15}
+                  step={1}
+                  disabled={disabled}
+                />
+                <p className="text-xs text-adam-neutral-500">
+                  Overflow riser on opposite side helps maintain head pressure
+                </p>
+              </div>
+            )}
           </div>
         </Card>
       )}
 
+      {/* Shear Edge Configuration (Forged carbon only) */}
       {config.type === 'forged-carbon' && (
         <Card className="border-adam-neutral-700 bg-adam-background-1 p-3">
           <Label className="mb-3 block text-sm font-medium text-adam-text-secondary">
-            Piston Clearance
+            Shear Edge (Telescopic Seal)
           </Label>
-          <div className="space-y-1">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-adam-neutral-400">
-                Gap between piston and bucket
-              </span>
-              <span className="text-xs text-adam-text-primary">
-                {config.pistonClearance}mm
-              </span>
+          <p className="mb-3 text-xs text-adam-neutral-500">
+            Proper shear edge design prevents flash while allowing easy
+            demolding
+          </p>
+
+          <div className="space-y-4">
+            {/* Shear Edge Gap */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Seal Gap (tight tolerance)
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.shearEdgeGap ?? 0.075}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.shearEdgeGap ?? 0.075]}
+                onValueChange={([value]) => updateConfig('shearEdgeGap', value)}
+                min={0.05}
+                max={0.15}
+                step={0.005}
+                disabled={disabled}
+              />
+              <p className="text-xs text-adam-neutral-500">
+                0.05-0.1mm recommended for forged carbon
+              </p>
             </div>
-            <Slider
-              value={[config.pistonClearance ?? 0.4]}
-              onValueChange={([value]) =>
-                updateConfig('pistonClearance', value)
-              }
-              min={0.1}
-              max={1.5}
-              step={0.1}
-              disabled={disabled}
-            />
+
+            {/* Shear Edge Depth */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Seal Depth (vertical interface)
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.shearEdgeDepth ?? 2.5}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.shearEdgeDepth ?? 2.5]}
+                onValueChange={([value]) =>
+                  updateConfig('shearEdgeDepth', value)
+                }
+                min={1}
+                max={5}
+                step={0.5}
+                disabled={disabled}
+              />
+            </div>
+
+            {/* Clearance Runout */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Clearance Runout (after seal)
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.clearanceRunout ?? 0.4}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.clearanceRunout ?? 0.4]}
+                onValueChange={([value]) =>
+                  updateConfig('clearanceRunout', value)
+                }
+                min={0.2}
+                max={0.6}
+                step={0.05}
+                disabled={disabled}
+              />
+            </div>
+
+            {/* Draft Angle */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Draft Angle
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.draftAngle ?? 0}°
+                </span>
+              </div>
+              <Slider
+                value={[config.draftAngle ?? 0]}
+                onValueChange={([value]) => updateConfig('draftAngle', value)}
+                min={0}
+                max={5}
+                step={0.5}
+                disabled={disabled}
+              />
+              <p className="text-xs text-adam-neutral-500">
+                {config.draftAngle === 0
+                  ? 'No draft (use analysis recommendation)'
+                  : `${config.draftAngle}° taper for easier demolding`}
+              </p>
+            </div>
+
+            {/* Profile Method */}
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-xs text-adam-neutral-400">
+                  Use Alpha Shape Profile
+                </span>
+                <p className="text-xs text-adam-neutral-500">
+                  Concave hull follows part contours tightly
+                </p>
+              </div>
+              <Switch
+                checked={config.useProjectedProfile ?? true}
+                onCheckedChange={(checked) =>
+                  updateConfig('useProjectedProfile', checked)
+                }
+                disabled={disabled}
+              />
+            </div>
+          </div>
+
+          {/* Shear Edge Diagram */}
+          <div className="mt-4 rounded-md bg-adam-background-2 p-2">
+            <p className="mb-1 text-xs font-medium text-adam-text-secondary">
+              Cross-section view:
+            </p>
+            <pre className="text-[10px] leading-tight text-adam-neutral-400">
+              {`   Piston          Bucket
+     │               ┃
+     │←─gap─→┃       ┃
+     │       ┃       ┃
+     │       ┃←seal─→┃
+     │       ┃ depth ┃
+     │       ┃       ┃
+     ├───────┘       ┃
+     │←──clearance──→┃
+     │               ┃`}
+            </pre>
           </div>
         </Card>
       )}
+
+      {/* Clamping System */}
+      <Card className="border-adam-neutral-700 bg-adam-background-1 p-3">
+        <div className="mb-3 flex items-center justify-between">
+          <Label className="text-sm font-medium text-adam-text-secondary">
+            Clamping Tabs
+          </Label>
+          <Switch
+            checked={config.enableClampingTabs}
+            onCheckedChange={(checked) =>
+              updateConfig('enableClampingTabs', checked)
+            }
+            disabled={disabled}
+          />
+        </div>
+        {config.enableClampingTabs && (
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">Tab Size</span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.clampTabSize}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.clampTabSize]}
+                onValueChange={([value]) => updateConfig('clampTabSize', value)}
+                min={10}
+                max={25}
+                step={1}
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Bolt Hole Diameter
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  M{config.clampHoleDiameter}
+                </span>
+              </div>
+              <Slider
+                value={[config.clampHoleDiameter]}
+                onValueChange={([value]) =>
+                  updateConfig('clampHoleDiameter', value)
+                }
+                min={3}
+                max={8}
+                step={1}
+                disabled={disabled}
+              />
+            </div>
+            <p className="text-xs text-adam-neutral-500">
+              Corner tabs with bolt holes to secure mold halves during curing
+            </p>
+          </div>
+        )}
+      </Card>
+
+      {/* Gasket Channel (Optional) */}
+      <Card className="border-adam-neutral-700 bg-adam-background-1 p-3">
+        <div className="mb-3 flex items-center justify-between">
+          <Label className="text-sm font-medium text-adam-text-secondary">
+            Gasket Channel
+          </Label>
+          <Switch
+            checked={config.enableGasketChannel}
+            onCheckedChange={(checked) =>
+              updateConfig('enableGasketChannel', checked)
+            }
+            disabled={disabled}
+          />
+        </div>
+        {config.enableGasketChannel && (
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Channel Width
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.gasketChannelWidth}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.gasketChannelWidth]}
+                onValueChange={([value]) =>
+                  updateConfig('gasketChannelWidth', value)
+                }
+                min={1}
+                max={5}
+                step={0.5}
+                disabled={disabled}
+              />
+            </div>
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Channel Depth
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.gasketChannelDepth}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.gasketChannelDepth]}
+                onValueChange={([value]) =>
+                  updateConfig('gasketChannelDepth', value)
+                }
+                min={0.5}
+                max={3}
+                step={0.5}
+                disabled={disabled}
+              />
+            </div>
+            <p className="text-xs text-adam-neutral-500">
+              Perimeter channel catches flash and can hold O-ring or silicone
+              gasket
+            </p>
+          </div>
+        )}
+      </Card>
 
       {/* Dimensions */}
       <Card className="border-adam-neutral-700 bg-adam-background-1 p-3">

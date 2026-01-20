@@ -7,18 +7,32 @@ export interface BoundingBox {
   z: number;
 }
 
+export interface MeshCenter {
+  x: number;
+  y: number;
+  z: number;
+}
+
+export interface STLParseResult {
+  geometry: THREE.BufferGeometry;
+  boundingBox: BoundingBox;
+  meshCenter: MeshCenter;
+}
+
 export interface STLProcessingResult {
   geometry: THREE.BufferGeometry;
   boundingBox: BoundingBox;
+  meshCenter: MeshCenter;
   renders: Blob[];
 }
 
 /**
- * Parse an STL file and extract geometry with bounding box
+ * Parse an STL file and extract geometry with bounding box and mesh center.
+ * The mesh center is the original center point BEFORE centering the geometry.
+ * This is critical for proper mold generation - we need to know where
+ * the original mesh center was to correctly position it in the mold cavity.
  */
-export async function parseSTL(
-  file: File,
-): Promise<{ geometry: THREE.BufferGeometry; boundingBox: BoundingBox }> {
+export async function parseSTL(file: File): Promise<STLParseResult> {
   const buffer = await file.arrayBuffer();
   const loader = new STLLoader();
   const geometry = loader.parse(buffer);
@@ -26,26 +40,36 @@ export async function parseSTL(
   geometry.computeBoundingBox();
   const box = geometry.boundingBox!;
 
+  // Calculate bounding box dimensions
   const boundingBox: BoundingBox = {
     x: Math.round((box.max.x - box.min.x) * 100) / 100,
     y: Math.round((box.max.y - box.min.y) * 100) / 100,
     z: Math.round((box.max.z - box.min.z) * 100) / 100,
   };
 
+  // Calculate the center of the bounding box BEFORE centering
+  // This is the point we need to translate by to center the mesh at origin
+  const meshCenter: MeshCenter = {
+    x: Math.round(((box.max.x + box.min.x) / 2) * 10000) / 10000,
+    y: Math.round(((box.max.y + box.min.y) / 2) * 10000) / 10000,
+    z: Math.round(((box.max.z + box.min.z) / 2) * 10000) / 10000,
+  };
+
+  // Now center the geometry for display purposes
   geometry.center();
   geometry.computeVertexNormals();
 
-  return { geometry, boundingBox };
+  return { geometry, boundingBox, meshCenter };
 }
 
 /**
  * Process an STL file: parse, extract dimensions, and render from multiple angles
  */
 export async function processSTL(file: File): Promise<STLProcessingResult> {
-  const { geometry, boundingBox } = await parseSTL(file);
+  const { geometry, boundingBox, meshCenter } = await parseSTL(file);
   const renders = await renderMultipleAngles(geometry, boundingBox);
 
-  return { geometry, boundingBox, renders };
+  return { geometry, boundingBox, meshCenter, renders };
 }
 
 /**
