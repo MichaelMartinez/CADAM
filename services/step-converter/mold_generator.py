@@ -1234,6 +1234,32 @@ def generate_modular_box_mold(
 
         print(f"Config: wall={wall:.1f}, stroke={stroke}, plate_thickness={plate_thickness}, fit_tolerance={fit_tolerance}")
 
+        # === COMPUTE PISTON PROFILE FROM ALPHA SHAPE ===
+        # The piston outer profile should match the part's contour (alpha shape)
+        # so it descends like a matched die, containing material properly
+        if alpha_shape_points and len(alpha_shape_points) >= 3:
+            # Use alpha shape as piston profile
+            piston_profile_pts = [(float(p[0]), float(p[1])) for p in alpha_shape_points]
+            print(f"Using alpha shape profile with {len(piston_profile_pts)} points")
+            use_contour_profile = True
+        else:
+            # Fallback to bounding box rectangle
+            hw, hd = part_width / 2, part_depth / 2
+            piston_profile_pts = [(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd)]
+            print("Using rectangular bounding box profile (no alpha shape)")
+            use_contour_profile = False
+
+        # Compute clearance profile by offsetting the piston profile outward
+        # This creates the opening in the mold halves that accepts the piston
+        clearance_profile_pts = offset_polygon(piston_profile_pts, fit_tolerance)
+        print(f"Clearance profile: {len(clearance_profile_pts)} points (offset by {fit_tolerance}mm)")
+
+        # Pre-compute left/right halves of clearance profile (split at Y=0)
+        # These are used for the clearance openings in left/right mold halves
+        left_clearance_pts = clip_polygon_to_half(clearance_profile_pts, y_max=0.0)
+        right_clearance_pts = clip_polygon_to_half(clearance_profile_pts, y_min=0.0)
+        print(f"  Left clearance: {len(left_clearance_pts)} points, Right clearance: {len(right_clearance_pts)} points")
+
         # Convert mesh to solid for mold cavity
         part_solid = mesh_to_solid_build123d(mesh)
         if part_solid is None:
@@ -1335,9 +1361,13 @@ def generate_modular_box_mold(
                 add(lower_left, mode=Mode.SUBTRACT)
 
             # Cut clearance for piston (where upper half protrusion enters)
+            # Use contour-following profile if available, otherwise fall back to rectangle
             with BuildSketch(Plane.XY.offset(clearance_z_start)):
-                with Locations([(0, -clearance_depth / 4)]):
-                    Rectangle(clearance_width, clearance_depth / 2)
+                if use_contour_profile and len(left_clearance_pts) >= 3:
+                    Polygon(left_clearance_pts)
+                else:
+                    with Locations([(0, -clearance_depth / 4)]):
+                        Rectangle(clearance_width, clearance_depth / 2)
             extrude(amount=clearance_height, mode=Mode.SUBTRACT)
 
         left_half = left_builder.part
@@ -1354,10 +1384,13 @@ def generate_modular_box_mold(
             if lower_right is not None:
                 add(lower_right, mode=Mode.SUBTRACT)
 
-            # Cut clearance for piston
+            # Cut clearance for piston (contour-following profile)
             with BuildSketch(Plane.XY.offset(clearance_z_start)):
-                with Locations([(0, clearance_depth / 4)]):
-                    Rectangle(clearance_width, clearance_depth / 2)
+                if use_contour_profile and len(right_clearance_pts) >= 3:
+                    Polygon(right_clearance_pts)
+                else:
+                    with Locations([(0, clearance_depth / 4)]):
+                        Rectangle(clearance_width, clearance_depth / 2)
             extrude(amount=clearance_height, mode=Mode.SUBTRACT)
 
         right_half = right_builder.part
@@ -1407,22 +1440,36 @@ def generate_modular_box_mold(
         flange_thickness = plate_thickness
 
         # Piston body (fits into clearance opening)
-        piston_body_width = clearance_width - 0.4  # 0.2mm clearance per side
+        # For contour-following: piston profile is the alpha shape, clearance is offset outward
+        # The piston body uses the piston_profile_pts directly (gap provided by clearance offset)
+        piston_body_clearance = 0.2  # Running clearance between piston and mold opening
+        piston_body_width = clearance_width - 0.4  # Fallback dimensions
         piston_body_depth = clearance_depth - 0.4
         # Piston body must be tall enough for: stroke travel + cavity depth (upper_height)
         piston_body_height = stroke + upper_height
 
+        # Compute piston body profile (slightly smaller than piston_profile for running clearance)
+        if use_contour_profile:
+            piston_body_profile_pts = offset_polygon(piston_profile_pts, -piston_body_clearance)
+            print(f"  Piston body: contour-following profile with {len(piston_body_profile_pts)} points")
+        else:
+            piston_body_profile_pts = None
+            print(f"  Piston body: {piston_body_width:.1f} x {piston_body_depth:.1f} mm (rectangular)")
+
         print(f"  Flange: {flange_width:.1f} x {flange_depth:.1f} x {flange_thickness:.1f} mm")
-        print(f"  Piston body: {piston_body_width:.1f} x {piston_body_depth:.1f} x {piston_body_height:.1f} mm")
+        print(f"  Piston body height: {piston_body_height:.1f} mm")
 
         with BuildPart() as top_builder:
             # Create flange plate (sits on mold halves)
             Box(flange_width, flange_depth, flange_thickness,
                 align=(Align.CENTER, Align.CENTER, Align.MIN))
 
-            # Add piston body extending downward
+            # Add piston body extending downward (contour-following or rectangular)
             with BuildSketch(Plane.XY):
-                Rectangle(piston_body_width, piston_body_depth)
+                if use_contour_profile and piston_body_profile_pts and len(piston_body_profile_pts) >= 3:
+                    Polygon(piston_body_profile_pts)
+                else:
+                    Rectangle(piston_body_width, piston_body_depth)
             extrude(amount=-piston_body_height)
 
             # SUBTRACT upper half of part to create cavity (not add!)
@@ -1464,7 +1511,9 @@ def generate_modular_box_mold(
             "leftVolume": left_part.volume if hasattr(left_part, 'volume') else 0,
             "rightVolume": right_part.volume if hasattr(right_part, 'volume') else 0,
             "topVolume": top_part.volume if hasattr(top_part, 'volume') else 0,
-            "profileType": "split_axis_" + split_axis,
+            "profileType": "contour_following" if use_contour_profile else "rectangular",
+            "splitAxis": split_axis,
+            "profilePoints": len(piston_profile_pts) if use_contour_profile else 4,
         }
 
         # Export all 3 parts
