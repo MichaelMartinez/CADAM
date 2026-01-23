@@ -30,7 +30,8 @@ try:
         add, Locations, Location, Plane, Axis,
         Mode, Align, Kind, export_step, export_stl,
         Solid, Face, Wire, Edge, Compound,
-        Box, Cylinder, Sphere, Cone
+        Box, Cylinder, Sphere, Cone,
+        GridLocations
     )
     BUILD123D_AVAILABLE = True
 except ImportError:
@@ -54,6 +55,101 @@ if not BUILD123D_AVAILABLE:
         FREECAD_AVAILABLE = True
     except ImportError:
         print("WARNING: FreeCAD not available either. Mold generation will fail.")
+
+
+def fill_mesh_cavities(mesh, voxel_pitch: float = 0.5) -> 'trimesh.Trimesh':
+    """
+    Fill internal cavities and through-holes in a mesh using voxelization.
+
+    This eliminates undercuts caused by holes/tubes passing through the part.
+    Uses voxelization + morphological closing to create a solid envelope.
+
+    Args:
+        mesh: trimesh.Trimesh object
+        voxel_pitch: Voxel size in mm (smaller = more detail, slower)
+
+    Returns:
+        New trimesh with cavities filled
+    """
+    try:
+        from scipy import ndimage
+    except ImportError:
+        print("  WARNING: scipy not available, skipping cavity fill")
+        return mesh
+
+    try:
+        # Voxelize the mesh
+        voxel_grid = mesh.voxelized(pitch=voxel_pitch)
+        matrix = voxel_grid.matrix.copy()
+
+        print(f"  Voxelizing mesh: {matrix.shape} voxels at {voxel_pitch}mm pitch")
+
+        # Fill internal holes using binary_fill_holes
+        # This fills any region of False that is completely surrounded by True
+        filled_matrix = ndimage.binary_fill_holes(matrix)
+
+        # Optional: Apply morphological closing to smooth and fill small gaps
+        # Closing = dilation followed by erosion
+        struct = ndimage.generate_binary_structure(3, 1)  # 6-connectivity
+        filled_matrix = ndimage.binary_closing(filled_matrix, structure=struct, iterations=1)
+
+        filled_count = int(np.sum(filled_matrix) - np.sum(matrix))
+        print(f"  Filled {filled_count} voxels (internal cavities)")
+
+        if filled_count == 0:
+            print("  No internal cavities found, using original mesh")
+            return mesh
+
+        # Create new voxel grid with filled matrix
+        filled_voxels = trimesh.voxel.VoxelGrid(
+            trimesh.voxel.encoding.DenseEncoding(filled_matrix),
+            transform=voxel_grid.transform
+        )
+
+        # Convert back to mesh using marching cubes
+        try:
+            filled_mesh = filled_voxels.marching_cubes
+        except Exception as mc_err:
+            print(f"  WARNING: Marching cubes failed: {mc_err}")
+            print("  Falling back to original mesh (install scikit-image for cavity fill)")
+            return mesh
+
+        # The marching cubes mesh may need repair
+        if hasattr(filled_mesh, 'is_watertight') and not filled_mesh.is_watertight:
+            try:
+                filled_mesh.fill_holes()
+            except:
+                pass  # Ignore fill_holes errors
+
+        # Align filled mesh bounds to match original mesh bounds
+        # The voxelized mesh may have different scale/position due to voxel grid
+        original_bounds = mesh.bounds
+        filled_bounds = filled_mesh.bounds
+
+        original_size = original_bounds[1] - original_bounds[0]
+        filled_size = filled_bounds[1] - filled_bounds[0]
+
+        # Scale to match original size
+        scale_factors = original_size / filled_size
+        filled_mesh.vertices *= scale_factors
+
+        # Recalculate bounds after scaling
+        filled_bounds = filled_mesh.bounds
+
+        # Translate to match original bounds
+        offset = original_bounds[0] - filled_bounds[0]
+        filled_mesh.vertices += offset
+
+        print(f"  Filled mesh: {len(filled_mesh.vertices)} vertices, watertight={getattr(filled_mesh, 'is_watertight', 'unknown')}")
+        print(f"  Aligned to original bounds (scale: {scale_factors}, offset: {offset})")
+
+        return filled_mesh
+
+    except Exception as e:
+        import traceback
+        print(f"  WARNING: Cavity fill failed: {e}")
+        print(f"  {traceback.format_exc()}")
+        return mesh
 
 
 def generate_mold(
@@ -138,13 +234,43 @@ def generate_mold(
             bounds = mesh.bounds
             bbox = bounds[1] - bounds[0]
 
+        # Compute alpha shape if needed but not provided
+        computed_alpha_points = alpha_shape_points
+        if use_alpha_shape and computed_alpha_points is None:
+            try:
+                from mesh_analysis import compute_alpha_shape
+                alpha_result = compute_alpha_shape(mesh, 'z', alpha=0.05)
+                if alpha_result and alpha_result.get("points"):
+                    computed_alpha_points = alpha_result["points"]
+                    print(f"Computed alpha shape with {len(computed_alpha_points)} points")
+                else:
+                    print("Alpha shape computation returned no points, using bounding box")
+            except ImportError:
+                print("mesh_analysis not available for alpha shape computation")
+            except Exception as e:
+                print(f"Alpha shape computation failed: {e}")
+
+        # Fallback to bounding box rectangle if no alpha shape
+        if use_alpha_shape and computed_alpha_points is None:
+            hw, hd = float(bbox[0]/2), float(bbox[1]/2)
+            computed_alpha_points = [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]
+            print("Using bounding box rectangle for profile")
+
         # Generate based on mold type
         if mold_type == "forged-carbon":
             result = generate_forged_carbon_mold(
                 mesh=mesh,
                 bbox=bbox,
                 config=config,
-                alpha_shape_points=alpha_shape_points if use_alpha_shape else None,
+                alpha_shape_points=computed_alpha_points if use_alpha_shape else None,
+                output_format=output_format
+            )
+        elif mold_type == "modular-box":
+            result = generate_modular_box_mold(
+                mesh=mesh,
+                bbox=bbox,
+                config=config,
+                alpha_shape_points=computed_alpha_points if use_alpha_shape else None,
                 output_format=output_format
             )
         else:
@@ -152,7 +278,7 @@ def generate_mold(
                 mesh=mesh,
                 bbox=bbox,
                 config=config,
-                alpha_shape_points=alpha_shape_points if use_alpha_shape else None,
+                alpha_shape_points=computed_alpha_points if use_alpha_shape else None,
                 output_format=output_format
             )
 
@@ -306,18 +432,20 @@ def generate_forged_carbon_build123d(
             piston_profile_pts = [(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd)]
 
         # === PISTON ===
+        # Pre-compute the inward offset profile for the clearance section
+        # This avoids the problematic offset() within BuildSketch context
+        clearance_profile_pts = offset_polygon(piston_profile_pts, -clearance)
+
         with BuildPart() as piston_builder:
             # Shear edge region (tight tolerance profile)
             with BuildSketch(Plane.XY):
                 Polygon(piston_profile_pts)
-            extrude(amount=shear_depth, taper=draft if draft > 0 else None)
+            extrude(amount=shear_depth)
 
             # Main body above shear edge (with clearance runout)
             with BuildSketch(Plane.XY.offset(shear_depth)):
-                # Offset inward for clearance
-                Polygon(piston_profile_pts)
-                offset(amount=-clearance, kind=Kind.INTERSECTION)
-            extrude(amount=piston_height - shear_depth, taper=draft if draft > 0 else None)
+                Polygon(clearance_profile_pts)  # Use pre-computed offset profile
+            extrude(amount=piston_height - shear_depth)
 
             # Cut part cavity from bottom
             # Position part at Z=0 (bottom of piston)
@@ -399,6 +527,17 @@ def mesh_to_solid_build123d(mesh) -> Optional[Any]:
         from OCP.TopoDS import TopoDS_Shape, TopoDS
         from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
 
+        # Validate input mesh
+        print(f"mesh_to_solid_build123d: Converting mesh with {mesh.vertices.shape[0]} vertices")
+        print(f"  Bounds: {mesh.bounds}")
+        print(f"  Watertight: {mesh.is_watertight}")
+
+        # Repair mesh if needed
+        if not mesh.is_watertight:
+            print("  Mesh is not watertight, attempting repair...")
+            mesh.fill_holes()
+            print(f"  After repair - Watertight: {mesh.is_watertight}")
+
         # Fix mesh normals for proper solid orientation
         mesh.fix_normals()
 
@@ -415,25 +554,70 @@ def mesh_to_solid_build123d(mesh) -> Optional[Any]:
                 print("mesh_to_solid_build123d: StlAPI_Reader failed to read STL")
                 return None
 
-            # Sew faces into a shell
-            sew = BRepBuilderAPI_Sewing(1e-6)
+            # Sew faces into a shell with appropriate tolerance
+            # Use a larger tolerance for potentially imperfect meshes
+            sew = BRepBuilderAPI_Sewing(1e-4)  # Increased from 1e-6 for robustness
             sew.Add(shape)
             sew.Perform()
             sewn = sew.SewedShape()
 
+            shape_type = sewn.ShapeType().name
+            print(f"  Sewn shape type: {shape_type}")
+
             # Convert shell to solid
-            if sewn.ShapeType().name == 'TopAbs_SHELL':
+            if shape_type == 'TopAbs_SHELL':
                 shell = TopoDS.Shell_s(sewn)
                 builder = BRepBuilderAPI_MakeSolid()
                 builder.Add(shell)
                 if builder.IsDone():
                     occ_solid = builder.Solid()
-                    return Solid(occ_solid)
+                    solid = Solid(occ_solid)
+
+                    # Validate output
+                    vol = solid.volume
+                    print(f"  Created solid with volume: {vol:.2f} mm³")
+
+                    if vol < 0:
+                        print("  WARNING: Negative volume detected - normals may be inverted")
+                        # The solid might still work for boolean operations
+                        # Build123D typically handles this internally
+
+                    if vol == 0:
+                        print("  ERROR: Zero volume solid - mesh may be degenerate")
+                        return None
+
+                    return solid
                 else:
                     print("mesh_to_solid_build123d: BRepBuilderAPI_MakeSolid failed")
                     return None
+            elif shape_type == 'TopAbs_COMPOUND':
+                # Sometimes we get a compound of shells, try to extract and combine
+                print("  Got compound shape, attempting to extract shells...")
+                from OCP.TopExp import TopExp_Explorer
+                from OCP.TopAbs import TopAbs_SHELL
+
+                explorer = TopExp_Explorer(sewn, TopAbs_SHELL)
+                builder = BRepBuilderAPI_MakeSolid()
+
+                shell_count = 0
+                while explorer.More():
+                    shell = TopoDS.Shell_s(explorer.Current())
+                    builder.Add(shell)
+                    shell_count += 1
+                    explorer.Next()
+
+                print(f"  Found {shell_count} shells in compound")
+
+                if builder.IsDone():
+                    occ_solid = builder.Solid()
+                    solid = Solid(occ_solid)
+                    print(f"  Created solid from compound with volume: {solid.volume:.2f} mm³")
+                    return solid
+                else:
+                    print("mesh_to_solid_build123d: Failed to create solid from compound")
+                    return None
             else:
-                print(f"mesh_to_solid_build123d: Sewn shape is {sewn.ShapeType()}, not SHELL")
+                print(f"mesh_to_solid_build123d: Sewn shape is {shape_type}, not SHELL or COMPOUND")
                 return None
 
         finally:
@@ -487,6 +671,247 @@ def manual_offset_polygon(points: List[Tuple[float, float]], offset: float) -> L
             result.append((px, py))
 
     return result
+
+
+def clip_polygon_to_half(
+    points: List[Tuple[float, float]],
+    y_min: Optional[float] = None,
+    y_max: Optional[float] = None
+) -> List[Tuple[float, float]]:
+    """
+    Clip 2D polygon to one side of a Y boundary.
+
+    Args:
+        points: List of (x, y) tuples representing the polygon
+        y_min: Keep only Y > y_min (right side in our convention)
+        y_max: Keep only Y < y_max (left side in our convention)
+
+    Returns:
+        Clipped polygon points
+    """
+    try:
+        from shapely.geometry import Polygon as ShapelyPolygon, box
+
+        poly = ShapelyPolygon(points)
+
+        # Get bounds for clipping box
+        minx, miny, maxx, maxy = poly.bounds
+
+        if y_max is not None:  # Keep Y < y_max (left side)
+            clip_box = box(minx - 1e6, miny - 1e6, maxx + 1e6, y_max)
+        elif y_min is not None:  # Keep Y > y_min (right side)
+            clip_box = box(minx - 1e6, y_min, maxx + 1e6, maxy + 1e6)
+        else:
+            return points
+
+        clipped = poly.intersection(clip_box)
+
+        if clipped.is_empty:
+            return points
+
+        # Handle MultiPolygon (take largest)
+        if clipped.geom_type == 'MultiPolygon':
+            clipped = max(clipped.geoms, key=lambda g: g.area)
+
+        if clipped.geom_type != 'Polygon':
+            return points
+
+        # Get exterior coordinates (remove closing duplicate)
+        coords = list(clipped.exterior.coords)[:-1]
+        return [(float(c[0]), float(c[1])) for c in coords]
+
+    except ImportError:
+        # Fallback: simple Y-filter (less accurate but works)
+        return manual_clip_polygon_to_half(points, y_min, y_max)
+    except Exception as e:
+        print(f"clip_polygon_to_half error: {e}")
+        return points
+
+
+def manual_clip_polygon_to_half(
+    points: List[Tuple[float, float]],
+    y_min: Optional[float] = None,
+    y_max: Optional[float] = None
+) -> List[Tuple[float, float]]:
+    """
+    Simple polygon clipping without Shapely.
+    Uses Sutherland-Hodgman algorithm for a single clip edge.
+    """
+    if not points:
+        return points
+
+    def clip_edge(poly: List[Tuple[float, float]], boundary_y: float, keep_below: bool) -> List[Tuple[float, float]]:
+        """Clip polygon against a horizontal line."""
+        clipped = []
+        n = len(poly)
+
+        for i in range(n):
+            curr = poly[i]
+            next_pt = poly[(i + 1) % n]
+
+            curr_inside = (curr[1] < boundary_y) if keep_below else (curr[1] > boundary_y)
+            next_inside = (next_pt[1] < boundary_y) if keep_below else (next_pt[1] > boundary_y)
+
+            if curr_inside:
+                clipped.append(curr)
+                if not next_inside:
+                    # Compute intersection
+                    t = (boundary_y - curr[1]) / (next_pt[1] - curr[1]) if (next_pt[1] - curr[1]) != 0 else 0
+                    intersect = (curr[0] + t * (next_pt[0] - curr[0]), boundary_y)
+                    clipped.append(intersect)
+            elif next_inside:
+                # Compute intersection
+                t = (boundary_y - curr[1]) / (next_pt[1] - curr[1]) if (next_pt[1] - curr[1]) != 0 else 0
+                intersect = (curr[0] + t * (next_pt[0] - curr[0]), boundary_y)
+                clipped.append(intersect)
+
+        return clipped
+
+    result = points
+    if y_max is not None:
+        result = clip_edge(result, y_max, keep_below=True)
+    if y_min is not None:
+        result = clip_edge(result, y_min, keep_below=False)
+
+    return result
+
+
+def split_solid_at_z_plane(solid, z_level: float = 0.0) -> Tuple[Optional[Any], Optional[Any]]:
+    """
+    Split a Build123D solid at a Z plane.
+
+    Args:
+        solid: Build123D Solid object
+        z_level: Z coordinate to split at (default 0)
+
+    Returns:
+        Tuple of (bottom_half, top_half) - parts below and above the plane
+        Either may be None if the solid doesn't cross the plane
+    """
+    try:
+        # Create a large cutting box
+        huge = 10000.0  # Large enough for any reasonable part
+
+        # Bottom cutting box (Z from -huge to z_level)
+        bottom_cutter = Box(huge, huge, huge)
+        bottom_cutter = bottom_cutter.moved(Location((0, 0, z_level - huge/2)))
+
+        # Top cutting box (Z from z_level to +huge)
+        top_cutter = Box(huge, huge, huge)
+        top_cutter = top_cutter.moved(Location((0, 0, z_level + huge/2)))
+
+        # Intersect to get halves
+        bottom_half = solid & bottom_cutter
+        top_half = solid & top_cutter
+
+        # Check volumes
+        bottom_vol = bottom_half.volume if hasattr(bottom_half, 'volume') else 0
+        top_vol = top_half.volume if hasattr(top_half, 'volume') else 0
+
+        return (
+            bottom_half if bottom_vol > 0.001 else None,
+            top_half if top_vol > 0.001 else None
+        )
+
+    except Exception as e:
+        print(f"split_solid_at_z_plane error: {e}")
+        return None, None
+
+
+def split_solid_at_y_plane(solid, y_level: float = 0.0) -> Tuple[Optional[Any], Optional[Any]]:
+    """
+    Split a Build123D solid at a Y plane (vertical parting line).
+
+    Args:
+        solid: Build123D Solid object
+        y_level: Y coordinate to split at (default 0)
+
+    Returns:
+        Tuple of (left_half, right_half) - parts with Y < y_level and Y > y_level
+        Either may be None if the solid doesn't cross the plane
+    """
+    try:
+        # Create a large cutting box
+        huge = 10000.0
+
+        # Left cutting box (Y from -huge to y_level)
+        left_cutter = Box(huge, huge, huge)
+        left_cutter = left_cutter.moved(Location((0, y_level - huge/2, 0)))
+
+        # Right cutting box (Y from y_level to +huge)
+        right_cutter = Box(huge, huge, huge)
+        right_cutter = right_cutter.moved(Location((0, y_level + huge/2, 0)))
+
+        # Intersect to get halves
+        left_half = solid & left_cutter
+        right_half = solid & right_cutter
+
+        # Check volumes
+        left_vol = left_half.volume if hasattr(left_half, 'volume') else 0
+        right_vol = right_half.volume if hasattr(right_half, 'volume') else 0
+
+        return (
+            left_half if left_vol > 0.001 else None,
+            right_half if right_vol > 0.001 else None
+        )
+
+    except Exception as e:
+        print(f"split_solid_at_y_plane error: {e}")
+        return None, None
+
+
+def split_solid_at_plane(solid, axis: str, level: float) -> Tuple[Optional[Any], Optional[Any]]:
+    """
+    Split a Build123D solid at a plane perpendicular to the given axis.
+
+    Args:
+        solid: Build123D Solid object
+        axis: 'x', 'y', or 'z' - the axis perpendicular to the split plane
+        level: coordinate value along the axis to split at
+
+    Returns:
+        Tuple of (lower_half, upper_half) - parts below/above the plane
+        Either may be None if the solid doesn't cross the plane
+    """
+    try:
+        huge = 10000.0
+
+        if axis == 'z':
+            # Split at Z plane
+            lower_cutter = Box(huge, huge, huge)
+            lower_cutter = lower_cutter.moved(Location((0, 0, level - huge/2)))
+            upper_cutter = Box(huge, huge, huge)
+            upper_cutter = upper_cutter.moved(Location((0, 0, level + huge/2)))
+        elif axis == 'y':
+            # Split at Y plane
+            lower_cutter = Box(huge, huge, huge)
+            lower_cutter = lower_cutter.moved(Location((0, level - huge/2, 0)))
+            upper_cutter = Box(huge, huge, huge)
+            upper_cutter = upper_cutter.moved(Location((0, level + huge/2, 0)))
+        elif axis == 'x':
+            # Split at X plane
+            lower_cutter = Box(huge, huge, huge)
+            lower_cutter = lower_cutter.moved(Location((level - huge/2, 0, 0)))
+            upper_cutter = Box(huge, huge, huge)
+            upper_cutter = upper_cutter.moved(Location((level + huge/2, 0, 0)))
+        else:
+            print(f"split_solid_at_plane: Unknown axis '{axis}', defaulting to Z")
+            return split_solid_at_z_plane(solid, level)
+
+        lower_half = solid & lower_cutter
+        upper_half = solid & upper_cutter
+
+        lower_vol = lower_half.volume if hasattr(lower_half, 'volume') else 0
+        upper_vol = upper_half.volume if hasattr(upper_half, 'volume') else 0
+
+        return (
+            lower_half if lower_vol > 0.001 else None,
+            upper_half if upper_vol > 0.001 else None
+        )
+
+    except Exception as e:
+        print(f"split_solid_at_plane error: {e}")
+        return None, None
 
 
 def add_registration_keys_build123d(piston, bucket, profile_pts, config, wall):
@@ -716,6 +1141,360 @@ def mesh_to_freecad_shape(mesh):
         return None
 
 
+def generate_modular_box_mold(
+    mesh,
+    bbox: np.ndarray,
+    config: Dict[str, Any],
+    alpha_shape_points: Optional[List[List[float]]],
+    output_format: str
+) -> Dict[str, Any]:
+    """
+    Generate 3-piece split-cavity modular compression mold with configurable split axis.
+
+    This design creates a 3-piece mold for compression molding:
+    - Left half: Y < 0 portion (contains LOWER half of part cavity)
+    - Right half: Y > 0 portion (contains LOWER half of part cavity)
+    - Top plate (piston): Flange + UPPER half of part as male protrusion
+
+    The key insight for parts with through-holes:
+    1. Split the part at the configured axis midpoint (default: Z)
+    2. LOWER half of part → Female cavity in Left/Right sides
+    3. UPPER half of part → Male protrusion on piston
+    4. Piston descends, its male form compresses material against the female cavity
+
+    Split Axis Options:
+    - Z (default): Vertical compression, part split horizontally at Z midpoint
+    - X: Horizontal compression along X, part split at X midpoint
+    - Y: Horizontal compression along Y, part split at Y midpoint
+
+    Assembly diagram (Z-split):
+                    ┌─────────────────┐
+                    │   FLANGE        │  ← Flat plate
+                    ├─────────────────┤
+                    │  ╔═══════════╗  │  ← Male protrusion (UPPER HALF of part)
+                    │  ║  (solid)  ║  │     Descends into clearance
+                    │  ╚═══════════╝  │
+     ───────────────┴─────────────────┴───────────────
+     │                                               │
+     │  LEFT/RIGHT HALVES                            │
+     │  ┌───────────────────────────────────────┐   │
+     │  │         (cavity)                      │   │  ← Female cavity (LOWER HALF of part)
+     │  └───────────────────────────────────────┘   │
+     │                                               │
+     └───────────────────────────────────────────────┘
+    """
+    result = {"success": True, "stats": {}}
+
+    if not BUILD123D_AVAILABLE:
+        return {
+            "success": False,
+            "error": "Build123D not available for modular box generation"
+        }
+
+    try:
+        # The mesh is already centered at origin (done in generate_mold)
+        part_bounds = mesh.bounds
+        part_z_min = float(part_bounds[0][2])
+        part_z_max = float(part_bounds[1][2])
+        part_x_min = float(part_bounds[0][0])
+        part_x_max = float(part_bounds[1][0])
+        part_y_min = float(part_bounds[0][1])
+        part_y_max = float(part_bounds[1][1])
+
+        part_width = part_x_max - part_x_min   # X dimension
+        part_depth = part_y_max - part_y_min   # Y dimension
+        part_height = part_z_max - part_z_min  # Z dimension
+
+        print(f"Part dimensions: {part_width:.2f} x {part_depth:.2f} x {part_height:.2f} mm")
+        print(f"Part bounds: X[{part_x_min:.2f}, {part_x_max:.2f}] Y[{part_y_min:.2f}, {part_y_max:.2f}] Z[{part_z_min:.2f}, {part_z_max:.2f}]")
+
+        # Config values
+        wall = config.get("wallThickness", 5.0)
+        modular_config = config.get("modularBox", {})
+        bolt_hole_dia = modular_config.get("boltHoleDiameter", 6.2)
+        stroke = modular_config.get("stroke", modular_config.get("compressionTravel", 10.0))
+        plate_thickness = modular_config.get("plateThickness", 5.0)
+        fit_tolerance = modular_config.get("fitTolerance", 0.1)
+        floor_thickness = modular_config.get("floorThickness", wall)
+
+        # Split axis for part division (default: Z for vertical compression)
+        split_axis = modular_config.get("splitAxis", config.get("splitAxis", "z")).lower()
+        print(f"Split axis: {split_axis.upper()}")
+
+        # Size multiplier for larger molds (50% increase = 1.5)
+        size_multiplier = modular_config.get("sizeMultiplier", 1.5)
+        wall = wall * size_multiplier
+        floor_thickness = floor_thickness * size_multiplier
+
+        # Ensure wall is thick enough for bolt holes + clearance from cavity
+        min_wall_for_bolts = bolt_hole_dia + 2.0
+        if wall < min_wall_for_bolts:
+            print(f"  Adjusting wall from {wall:.1f}mm to {min_wall_for_bolts:.1f}mm for bolt clearance")
+            wall = min_wall_for_bolts
+
+        print(f"Config: wall={wall:.1f}, stroke={stroke}, plate_thickness={plate_thickness}, fit_tolerance={fit_tolerance}")
+
+        # Convert mesh to solid for mold cavity
+        part_solid = mesh_to_solid_build123d(mesh)
+        if part_solid is None:
+            return {
+                "success": False,
+                "error": "Failed to convert mesh to solid for boolean operations"
+            }
+
+        # === POSITION PART AT FLOOR LEVEL ===
+        # Part bottom should rest on floor
+        part_z_offset = floor_thickness - part_z_min
+        part_positioned = part_solid.moved(Location((0, 0, part_z_offset)))
+
+        # === SPLIT PART AT CONFIGURED AXIS MIDPOINT ===
+        # This is the key to the correct 3-part mold design
+        # The part is split into lower and upper halves along the compression axis
+        if split_axis == 'z':
+            # Z-split: horizontal cut at part's Z midpoint (after positioning)
+            split_level = floor_thickness + (part_height / 2)
+            print(f"Splitting part at Z={split_level:.2f}mm (part midpoint)")
+        elif split_axis == 'x':
+            # X-split: vertical cut at X=0 (part is centered)
+            split_level = 0.0
+            print(f"Splitting part at X={split_level:.2f}mm (part center)")
+        elif split_axis == 'y':
+            # Y-split: vertical cut at Y=0 (part is centered)
+            # Note: For Y-split, the "lower/upper" become "front/back"
+            split_level = 0.0
+            print(f"Splitting part at Y={split_level:.2f}mm (part center)")
+        else:
+            print(f"Unknown split axis '{split_axis}', defaulting to Z")
+            split_axis = 'z'
+            split_level = floor_thickness + (part_height / 2)
+
+        # Split the positioned part into lower/upper halves
+        part_lower, part_upper = split_solid_at_plane(part_positioned, split_axis, split_level)
+        print(f"  Part split result: lower={part_lower is not None}, upper={part_upper is not None}")
+
+        if part_lower is None or part_upper is None:
+            print("  WARNING: Part split failed to produce two halves. Using full part for cavity.")
+            # Fallback: use full part for cavity, no male protrusion
+            part_lower = part_positioned
+            part_upper = None
+
+        # Get bounds of each half for dimension calculations
+        if part_lower is not None:
+            lower_bbox = part_lower.bounding_box()
+            lower_height = lower_bbox.max.Z - lower_bbox.min.Z
+            print(f"  Lower half height: {lower_height:.2f}mm")
+        else:
+            lower_height = part_height / 2
+
+        if part_upper is not None:
+            upper_bbox = part_upper.bounding_box()
+            upper_height = upper_bbox.max.Z - upper_bbox.min.Z
+            upper_width = upper_bbox.max.X - upper_bbox.min.X
+            upper_depth = upper_bbox.max.Y - upper_bbox.min.Y
+            print(f"  Upper half: {upper_width:.2f} x {upper_depth:.2f} x {upper_height:.2f}mm")
+        else:
+            upper_height = 0
+            upper_width = part_width
+            upper_depth = part_depth
+
+        # === MOLD DIMENSIONS ===
+        mold_width = part_width + 2 * wall   # X dimension
+        mold_depth = part_depth + 2 * wall   # Y dimension
+        # Mold height based on lower half + stroke (upper half is on piston)
+        mold_height = floor_thickness + lower_height + stroke
+
+        # Clearance opening dimensions (for piston entry)
+        # CRITICAL: Clearance must be at least as large as full part dimensions
+        # to avoid slivers/ledges at the cavity-to-clearance transition
+        # (per lessons-learned: "Always extend clearance cuts to avoid ledges/steps")
+        clearance_width = max(upper_width, part_width) + 2 * fit_tolerance
+        clearance_depth = max(upper_depth, part_depth) + 2 * fit_tolerance
+        clearance_height = stroke
+
+        print(f"Mold dimensions: {mold_width:.2f} x {mold_depth:.2f} x {mold_height:.2f} mm")
+        print(f"Clearance opening: {clearance_width:.2f} x {clearance_depth:.2f} mm")
+
+        # === SPLIT LOWER HALF AT Y=0 FOR LEFT/RIGHT MOLD HALVES ===
+        # The parting line is always at Y=0 for the mold halves
+        if part_lower is not None:
+            lower_left, lower_right = split_solid_at_y_plane(part_lower, y_level=0.0)
+            print(f"  Lower half Y-split: left={lower_left is not None}, right={lower_right is not None}")
+        else:
+            lower_left, lower_right = None, None
+
+        # === CREATE LEFT MOLD HALF (Y < 0) ===
+        print("Creating left mold half...")
+        clearance_z_start = floor_thickness + lower_height
+        with BuildPart() as left_builder:
+            # Create left half of mold box
+            Box(mold_width, mold_depth / 2, mold_height,
+                align=(Align.CENTER, Align.MAX, Align.MIN))  # MAX aligns Y to 0
+
+            # Subtract only the LOWER-LEFT portion of the part
+            if lower_left is not None:
+                add(lower_left, mode=Mode.SUBTRACT)
+
+            # Cut clearance for piston (where upper half protrusion enters)
+            with BuildSketch(Plane.XY.offset(clearance_z_start)):
+                with Locations([(0, -clearance_depth / 4)]):
+                    Rectangle(clearance_width, clearance_depth / 2)
+            extrude(amount=clearance_height, mode=Mode.SUBTRACT)
+
+        left_half = left_builder.part
+        print(f"  Left half volume: {left_half.volume:.2f} mm³")
+
+        # === CREATE RIGHT MOLD HALF (Y > 0) ===
+        print("Creating right mold half...")
+        with BuildPart() as right_builder:
+            # Create right half of mold box
+            Box(mold_width, mold_depth / 2, mold_height,
+                align=(Align.CENTER, Align.MIN, Align.MIN))  # MIN aligns Y to 0
+
+            # Subtract only the LOWER-RIGHT portion of the part
+            if lower_right is not None:
+                add(lower_right, mode=Mode.SUBTRACT)
+
+            # Cut clearance for piston
+            with BuildSketch(Plane.XY.offset(clearance_z_start)):
+                with Locations([(0, clearance_depth / 4)]):
+                    Rectangle(clearance_width, clearance_depth / 2)
+            extrude(amount=clearance_height, mode=Mode.SUBTRACT)
+
+        right_half = right_builder.part
+        print(f"  Right half volume: {right_half.volume:.2f} mm³")
+
+        # === ADD BOLT HOLES ===
+        bolt_margin = bolt_hole_dia / 2 + 1.0
+
+        print("Adding bolt holes to left half...")
+        with BuildPart() as left_with_bolts:
+            add(left_half)
+            bolt_positions_left = [
+                (-mold_width/2 + bolt_margin, -mold_depth/2 + bolt_margin),
+                (mold_width/2 - bolt_margin, -mold_depth/2 + bolt_margin),
+            ]
+            for bx, by in bolt_positions_left:
+                with BuildSketch(Plane.XY):
+                    with Locations([(bx, by)]):
+                        Circle(bolt_hole_dia / 2)
+                extrude(amount=mold_height, mode=Mode.SUBTRACT)
+
+        left_part = left_with_bolts.part
+
+        print("Adding bolt holes to right half...")
+        with BuildPart() as right_with_bolts:
+            add(right_half)
+            bolt_positions_right = [
+                (-mold_width/2 + bolt_margin, mold_depth/2 - bolt_margin),
+                (mold_width/2 - bolt_margin, mold_depth/2 - bolt_margin),
+            ]
+            for bx, by in bolt_positions_right:
+                with BuildSketch(Plane.XY):
+                    with Locations([(bx, by)]):
+                        Circle(bolt_hole_dia / 2)
+                extrude(amount=mold_height, mode=Mode.SUBTRACT)
+
+        right_part = right_with_bolts.part
+
+        # === CREATE PISTON WITH UPPER HALF AS MALE PROTRUSION ===
+        # This is the key change: piston contains the UPPER half of the part
+        # as a solid male form, not just a shallow impression
+        print("Creating piston with upper-half male protrusion...")
+
+        # Flange dimensions (sits on top of mold halves)
+        flange_width = mold_width
+        flange_depth = mold_depth
+        flange_thickness = plate_thickness
+
+        # Piston body (fits into clearance opening)
+        piston_body_width = clearance_width - 0.4  # 0.2mm clearance per side
+        piston_body_depth = clearance_depth - 0.4
+        # Piston body must be tall enough for: stroke travel + cavity depth (upper_height)
+        piston_body_height = stroke + upper_height
+
+        print(f"  Flange: {flange_width:.1f} x {flange_depth:.1f} x {flange_thickness:.1f} mm")
+        print(f"  Piston body: {piston_body_width:.1f} x {piston_body_depth:.1f} x {piston_body_height:.1f} mm")
+
+        with BuildPart() as top_builder:
+            # Create flange plate (sits on mold halves)
+            Box(flange_width, flange_depth, flange_thickness,
+                align=(Align.CENTER, Align.CENTER, Align.MIN))
+
+            # Add piston body extending downward
+            with BuildSketch(Plane.XY):
+                Rectangle(piston_body_width, piston_body_depth)
+            extrude(amount=-piston_body_height)
+
+            # SUBTRACT upper half of part to create cavity (not add!)
+            # The upper half needs to be positioned so it extends UP into the piston body
+            if part_upper is not None:
+                # Piston bottom is at Z = -piston_body_height
+                # Position upper half so its BOTTOM (parting plane) aligns with piston bottom
+                # Then it extends upward INTO the piston body where subtraction creates cavity
+                protrusion_z_offset = -piston_body_height - upper_bbox.min.Z
+
+                upper_positioned = part_upper.moved(Location((0, 0, protrusion_z_offset)))
+                print(f"  Subtracting upper half to create piston cavity (Z offset: {protrusion_z_offset:.2f}mm)")
+                print(f"    Upper half will be at Z={upper_bbox.min.Z + protrusion_z_offset:.2f} to Z={upper_bbox.max.Z + protrusion_z_offset:.2f}")
+                add(upper_positioned, mode=Mode.SUBTRACT)  # SUBTRACT creates cavity
+            else:
+                print("  No upper half available - piston will have flat bottom")
+
+        top_part = top_builder.part
+        # piston_body_height already includes upper_height (stroke + upper_height)
+        piston_total_height = flange_thickness + piston_body_height
+        print(f"Top plate volume: {top_part.volume:.2f} mm³ (total height: {piston_total_height:.1f} mm)")
+
+        # Calculate volumes for stats
+        result["stats"] = {
+            "partWidth": part_width,
+            "partDepth": part_depth,
+            "partHeight": part_height,
+            "moldWidth": mold_width,
+            "moldDepth": mold_depth,
+            "moldHeight": mold_height,
+            "pistonWidth": piston_body_width,
+            "pistonDepth": piston_body_depth,
+            "pistonHeight": piston_total_height,
+            "lowerHalfHeight": lower_height,
+            "upperHalfHeight": upper_height if part_upper else 0,
+            "stroke": stroke,
+            "wallThickness": wall,
+            "splitAxis": split_axis,
+            "leftVolume": left_part.volume if hasattr(left_part, 'volume') else 0,
+            "rightVolume": right_part.volume if hasattr(right_part, 'volume') else 0,
+            "topVolume": top_part.volume if hasattr(top_part, 'volume') else 0,
+            "profileType": "split_axis_" + split_axis,
+        }
+
+        # Export all 3 parts
+        if output_format in ['stl', 'both']:
+            result["leftStl"] = base64.b64encode(export_to_stl_bytes(left_part)).decode('utf-8')
+            result["rightStl"] = base64.b64encode(export_to_stl_bytes(right_part)).decode('utf-8')
+            result["topStl"] = base64.b64encode(export_to_stl_bytes(top_part)).decode('utf-8')
+
+            # For backwards compatibility
+            result["pistonStl"] = result["topStl"]
+            result["bucketStl"] = result["leftStl"]  # Just use left as bucket fallback
+
+        if output_format in ['step', 'both']:
+            result["leftStep"] = base64.b64encode(export_to_step_bytes(left_part)).decode('utf-8')
+            result["rightStep"] = base64.b64encode(export_to_step_bytes(right_part)).decode('utf-8')
+            result["topStep"] = base64.b64encode(export_to_step_bytes(top_part)).decode('utf-8')
+
+            result["pistonStep"] = result["topStep"]
+            result["bucketStep"] = result["leftStep"]
+
+    except Exception as e:
+        import traceback
+        result = {
+            "success": False,
+            "error": f"Modular box generation failed: {str(e)}\n{traceback.format_exc()}"
+        }
+
+    return result
+
+
 def generate_standard_mold(
     mesh,
     bbox: np.ndarray,
@@ -744,28 +1523,78 @@ if __name__ == "__main__":
         with open(sys.argv[1], 'rb') as f:
             stl_data = f.read()
 
+        # Check for mold type argument
+        mold_type = sys.argv[2] if len(sys.argv) > 2 else "modular-box"
+
+        # Check for --alpha flag to use alpha shape profile
+        use_alpha = "--alpha" in sys.argv
+
+        # Check for --split-axis argument
+        split_axis = "z"  # default
+        for i, arg in enumerate(sys.argv):
+            if arg == "--split-axis" and i + 1 < len(sys.argv):
+                split_axis = sys.argv[i + 1].lower()
+                if split_axis not in ['x', 'y', 'z']:
+                    print(f"Invalid split axis '{split_axis}', using 'z'")
+                    split_axis = "z"
+
         config = {
-            "moldType": "forged-carbon",
+            "moldType": mold_type,
             "moldShape": "rectangular",
             "orientation": "z",
+            "splitAxis": split_axis,
             "shearEdgeGap": 0.075,
             "shearEdgeDepth": 2.5,
             "clearanceRunout": 0.4,
             "draftAngle": 0,
             "wallThickness": 5.0,
-            "useAlphaShapeProfile": False,
-            "outputFormat": "stl"
+            "useAlphaShapeProfile": use_alpha,
+            "outputFormat": "stl",
+            "modularBox": {
+                "boltHoleDiameter": 6.2,
+                "stroke": 10.0,
+                "plateThickness": 5.0,
+                "fitTolerance": 0.1,
+                "floorThickness": 5.0,
+                "splitAxis": split_axis,
+            }
         }
 
+        print(f"Generating {mold_type} mold (split axis: {split_axis.upper()}, alpha shape: {use_alpha})...")
         result = generate_mold(stl_data, config)
 
         # Remove binary data for printing
         printable = {k: v for k, v in result.items() if not k.endswith('Stl') and not k.endswith('Step')}
         print(json.dumps(printable, indent=2))
 
-        if result.get("success") and result.get("pistonStl"):
-            print(f"Piston STL: {len(result['pistonStl'])} bytes (base64)")
-        if result.get("success") and result.get("bucketStl"):
-            print(f"Bucket STL: {len(result['bucketStl'])} bytes (base64)")
+        if result.get("success"):
+            # Report STL sizes
+            for key in ['leftStl', 'rightStl', 'topStl', 'pistonStl', 'bucketStl']:
+                if result.get(key):
+                    print(f"{key}: {len(result[key])} bytes (base64)")
+
+            # Optionally save STL files for inspection
+            if "--save" in sys.argv:
+                import base64
+                output_dir = "output_mold"
+                os.makedirs(output_dir, exist_ok=True)
+
+                # Save the 3 main parts
+                parts_to_save = {
+                    'leftStl': 'left.stl',
+                    'rightStl': 'right.stl',
+                    'topStl': 'top.stl',
+                }
+
+                for key, filename in parts_to_save.items():
+                    if result.get(key):
+                        filepath = f"{output_dir}/{filename}"
+                        with open(filepath, 'wb') as f:
+                            f.write(base64.b64decode(result[key]))
+                        print(f"Saved: {filepath}")
     else:
-        print("Usage: python mold_generator.py <stl_file>")
+        print("Usage: python mold_generator.py <stl_file> [mold_type] [--save] [--alpha] [--split-axis x|y|z]")
+        print("  mold_type: forged-carbon, modular-box (default)")
+        print("  --save: Save generated STL files to output_mold/")
+        print("  --alpha: Use alpha shape profile instead of rectangular bounding box")
+        print("  --split-axis: Axis to split part for compression (x, y, or z; default: z)")

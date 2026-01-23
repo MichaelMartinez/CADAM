@@ -5,7 +5,7 @@
  * Supports standard casting molds and forged carbon compression molds.
  */
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Canvas } from '@react-three/fiber';
 import {
@@ -18,14 +18,7 @@ import {
 } from '@react-three/drei';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import * as THREE from 'three';
-import {
-  Loader2,
-  Box,
-  Download,
-  Save,
-  XCircle,
-  AlertTriangle,
-} from 'lucide-react';
+import { Loader2, Box, Download, Save } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -33,15 +26,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { STLSourcePicker } from '@/components/mold/STLSourcePicker';
 import { MoldConfigPanel } from '@/components/mold/MoldConfigPanel';
 import { MeshAnalysisPanel } from '@/components/mold/MeshAnalysisPanel';
-import { useOpenSCAD } from '@/hooks/useOpenSCAD';
 import { useMeshAnalysis, useMoldGeneration } from '@/hooks/useMeshAnalysis';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import { generateMoldCode, formatConfigSummary } from '@/utils/moldTemplates';
 import { downloadFile } from '@/utils/downloadUtils';
-// Server-side mold generation utilities (will be used when server integration is complete)
-// import { downloadMoldFile, decodeBase64ToArrayBuffer } from '@/services/moldService';
+import {
+  decodeBase64ToArrayBuffer,
+  decodeBase64ToBlob,
+} from '@/services/moldService';
 import { moldLogger } from '@/lib/logger';
 import type {
   STLSource,
@@ -51,7 +45,6 @@ import type {
   SplitAxis,
 } from '@/types/mold';
 import { DEFAULT_MOLD_CONFIG } from '@/types/mold';
-import type { CompilationEvent } from '@shared/types';
 
 // Simple 3D mesh viewer component
 function SimpleMeshViewer({
@@ -117,15 +110,17 @@ export function MoldGeneratorView() {
     clearAnalysis: _clearAnalysis,
   } = useMeshAnalysis();
 
-  // FreeCAD mold generation hook (new server-side method)
-  // These will be used when we switch fully to server-side generation
+  // FreeCAD mold generation hook (server-side Build123D generation)
   const {
-    generationResult: _generationResult,
-    isGenerating: _isGeneratingServer,
-    generationError: _generationError,
-    generateFromConfig: _generateFromConfig,
+    generationResult,
+    isGenerating: isGeneratingServer,
+    generationError,
+    generateFromConfig,
     clearGeneration: _clearGeneration,
   } = useMoldGeneration();
+
+  // Combined loading state for UI
+  const isGenerating = isGeneratingServer;
 
   // Tab state for left panel
   const [leftPanelTab, setLeftPanelTab] = useState<'config' | 'analysis'>(
@@ -134,80 +129,25 @@ export function MoldGeneratorView() {
 
   // Generated mold state
   const [generatedCode, setGeneratedCode] = useState<string | null>(null);
-  const [moldGeometry, setMoldGeometry] = useState<THREE.BufferGeometry | null>(
-    null,
-  );
-  const [isSaving, setIsSaving] = useState(false);
+  const [pistonGeometry, setPistonGeometry] =
+    useState<THREE.BufferGeometry | null>(null);
+  const [bucketGeometry, setBucketGeometry] =
+    useState<THREE.BufferGeometry | null>(null);
 
-  // Compilation progress tracking
-  const [compilationStage, setCompilationStage] = useState<string>('');
-  const [compilationElapsed, setCompilationElapsed] = useState<number>(0);
-  const compilationStartRef = useRef<number | null>(null);
-
-  // Handle compilation events from OpenSCAD worker
-  const handleCompilationEvent = useCallback((event: CompilationEvent) => {
-    // Parse stage from echo statements (format: ">>> STAGE: message")
-    if (
-      event.type === 'compilation.stderr' &&
-      event.message.includes('>>> STAGE:')
-    ) {
-      const stageMatch = event.message.match(/>>> STAGE:\s*(.+)/);
-      if (stageMatch) {
-        const stage = stageMatch[1].trim();
-        setCompilationStage(stage);
-        moldLogger.info(`Stage: ${stage}`);
-      }
-    }
-    // Update stage for major compilation events
-    if (event.type === 'compilation.rendering') {
-      setCompilationStage('Rendering geometry...');
-    } else if (event.type === 'library.loading') {
-      setCompilationStage(`Loading ${event.library ?? 'library'}...`);
-    } else if (event.type === 'compilation.complete') {
-      setCompilationStage('Complete!');
-    }
-    // Log all compilation events for debugging
-    if (
-      event.type === 'compilation.stderr' ||
-      event.type === 'compilation.error'
-    ) {
-      moldLogger.debug(`[${event.type}] ${event.message}`);
-    }
-  }, []);
-
-  // OpenSCAD hook with event callback
-  const {
-    compileScad,
-    cancelCompilation,
-    writeFile,
-    isCompiling,
-    output,
-    error,
-    compilationEvents: _compilationEvents,
-  } = useOpenSCAD({
-    onCompilationEvent: handleCompilationEvent,
+  // Modular box specific state (3 pieces: left/right halves + top piston)
+  const [modularBoxGeometries, setModularBoxGeometries] = useState<{
+    left: THREE.BufferGeometry | null;
+    right: THREE.BufferGeometry | null;
+    top: THREE.BufferGeometry | null;
+  }>({
+    left: null,
+    right: null,
+    top: null,
   });
 
-  // Timer effect to track elapsed compilation time
-  useEffect(() => {
-    if (isCompiling) {
-      compilationStartRef.current = Date.now();
-      setCompilationElapsed(0);
-      setCompilationStage('Initializing...');
-
-      const interval = setInterval(() => {
-        if (compilationStartRef.current) {
-          setCompilationElapsed(Date.now() - compilationStartRef.current);
-        }
-      }, 100);
-
-      return () => {
-        clearInterval(interval);
-      };
-    } else {
-      compilationStartRef.current = null;
-    }
-  }, [isCompiling]);
+  type MoldViewPart = 'piston' | 'bucket' | 'left' | 'right' | 'top';
+  const [moldViewPart, setMoldViewPart] = useState<MoldViewPart>('piston');
+  const [isSaving, setIsSaving] = useState(false);
 
   // Handle STL source selection
   const handleSTLSelect = useCallback(
@@ -221,7 +161,8 @@ export function MoldGeneratorView() {
       setBoundingBox(bbox);
       setMeshCenter(center);
       setGeneratedCode(null);
-      setMoldGeometry(null);
+      setPistonGeometry(null);
+      setBucketGeometry(null);
 
       // Load the geometry for preview
       try {
@@ -359,7 +300,7 @@ export function MoldGeneratorView() {
     }
 
     moldLogger.group('Mold Generation', () => {
-      moldLogger.info('Starting mold generation', {
+      moldLogger.info('Starting server-side mold generation', {
         stlFile: stlSource.filename,
         moldType: config.type,
         shape: config.shape,
@@ -368,51 +309,33 @@ export function MoldGeneratorView() {
     });
 
     try {
-      // Write STL to OpenSCAD worker filesystem as Blob
-      const meshFilename = '/input.stl';
-      const stlBlob = new Blob([stlArrayBuffer], { type: 'model/stl' });
+      // Use server-side FreeCAD/Build123D generation
+      const result = await generateFromConfig(
+        stlArrayBuffer,
+        config,
+        analysisResult ?? undefined,
+      );
 
-      const writeStart = performance.now();
-      moldLogger.info('Writing STL to worker filesystem...', {
-        path: meshFilename,
-        size: stlArrayBuffer.byteLength,
-      });
-      await writeFile(meshFilename, stlBlob);
-      moldLogger.info('STL written to worker', {
-        duration: `${(performance.now() - writeStart).toFixed(0)}ms`,
+      moldLogger.info('Mold generation complete', {
+        success: result.success,
+        generationTimeMs: result.generationTimeMs,
+        hasPiston: !!result.pistonStl,
+        hasBucket: !!result.bucketStl,
       });
 
-      // Generate OpenSCAD code with mesh center for proper positioning
+      // For compatibility, generate code summary for saving
       const code = generateMoldCode(
         config,
         boundingBox,
-        meshFilename,
+        '/input.stl',
         meshCenter ?? undefined,
       );
-
-      const hasMinkowski = code.includes('minkowski()');
-      moldLogger.info('Generated OpenSCAD code', {
-        codeLength: code.length,
-        hasMinkowski,
-        boundingBox,
-        meshCenter,
-      });
-
-      // Log code in collapsed group for debugging
-      moldLogger.groupCollapsed('Generated SCAD Code', () => {
-        console.log(code);
-      });
-
       setGeneratedCode(code);
 
-      // Compile
-      moldLogger.info('Starting OpenSCAD compilation...', {
-        timestamp: new Date().toISOString(),
-        warning: hasMinkowski
-          ? 'Contains minkowski() - may be slow'
-          : undefined,
+      toast({
+        title: 'Mold generated',
+        description: `Generated in ${result.generationTimeMs}ms`,
       });
-      await compileScad(code);
     } catch (err) {
       moldLogger.error('Error generating mold', err);
       toast({
@@ -428,30 +351,112 @@ export function MoldGeneratorView() {
     meshCenter,
     stlArrayBuffer,
     config,
-    writeFile,
-    compileScad,
+    analysisResult,
+    generateFromConfig,
   ]);
 
-  // Parse compiled output to geometry
+  // Parse server generation result to geometries
   useEffect(() => {
-    if (output && output instanceof Blob) {
-      output.arrayBuffer().then((buffer) => {
-        const loader = new STLLoader();
-        const geometry = loader.parse(buffer);
-        geometry.center();
-        geometry.computeVertexNormals();
-        setMoldGeometry(geometry);
-      });
-    }
-  }, [output]);
+    const loader = new STLLoader();
 
-  // Handle download
-  const handleDownload = useCallback(() => {
-    if (output instanceof Blob && stlSource) {
-      const filename = `mold-${stlSource.filename.replace('.stl', '')}.stl`;
-      downloadFile({ content: output, filename, mimeType: 'model/stl' });
+    // Standard/forged-carbon: piston and bucket
+    if (generationResult?.pistonStl) {
+      const buffer = decodeBase64ToArrayBuffer(generationResult.pistonStl);
+      const geometry = loader.parse(buffer);
+      geometry.center();
+      geometry.computeVertexNormals();
+      setPistonGeometry(geometry);
+    } else {
+      setPistonGeometry(null);
     }
-  }, [output, stlSource]);
+
+    if (generationResult?.bucketStl) {
+      const buffer = decodeBase64ToArrayBuffer(generationResult.bucketStl);
+      const geometry = loader.parse(buffer);
+      geometry.center();
+      geometry.computeVertexNormals();
+      setBucketGeometry(geometry);
+    } else {
+      setBucketGeometry(null);
+    }
+
+    // Modular box: 3 separate pieces (left half, right half, top piston)
+    const parseModularPart = (
+      stlData: string | undefined,
+    ): THREE.BufferGeometry | null => {
+      if (!stlData) return null;
+      const buffer = decodeBase64ToArrayBuffer(stlData);
+      const geometry = loader.parse(buffer);
+      geometry.center();
+      geometry.computeVertexNormals();
+      return geometry;
+    };
+
+    setModularBoxGeometries({
+      left: parseModularPart(generationResult?.leftStl),
+      right: parseModularPart(generationResult?.rightStl),
+      top: parseModularPart(generationResult?.topStl),
+    });
+
+    // Reset view part when switching mold types
+    if (config.type === 'modular-box') {
+      setMoldViewPart('left');
+    } else {
+      setMoldViewPart('piston');
+    }
+  }, [generationResult, config.type]);
+
+  // Handle download - download all mold parts
+  const handleDownload = useCallback(() => {
+    if (!stlSource) return;
+    const baseName = stlSource.filename.replace('.stl', '');
+
+    if (config.type === 'modular-box') {
+      // Download all 3 modular box pieces (left/right halves + top piston)
+      const parts = [
+        { key: 'leftStl', name: 'left-half' },
+        { key: 'rightStl', name: 'right-half' },
+        { key: 'topStl', name: 'top-piston' },
+      ] as const;
+
+      parts.forEach(({ key, name }) => {
+        const stlData = generationResult?.[key];
+        if (stlData) {
+          const blob = decodeBase64ToBlob(stlData, 'model/stl');
+          downloadFile({
+            content: blob,
+            filename: `${baseName}-mold-${name}.stl`,
+            mimeType: 'model/stl',
+          });
+        }
+      });
+    } else {
+      // Standard/forged-carbon: download piston and bucket
+      if (generationResult?.pistonStl) {
+        const pistonBlob = decodeBase64ToBlob(
+          generationResult.pistonStl,
+          'model/stl',
+        );
+        downloadFile({
+          content: pistonBlob,
+          filename: `${baseName}-piston.stl`,
+          mimeType: 'model/stl',
+        });
+      }
+
+      if (generationResult?.bucketStl) {
+        const bucketBlob = decodeBase64ToBlob(
+          generationResult.bucketStl,
+          'model/stl',
+        );
+        downloadFile({
+          content: bucketBlob,
+          filename: `${baseName}-bucket.stl`,
+          mimeType: 'model/stl',
+        });
+      }
+    }
+  }, [generationResult, stlSource, config.type]);
 
   // Handle save as creation
   const handleSaveAsCreation = useCallback(async () => {
@@ -509,11 +514,23 @@ export function MoldGeneratorView() {
       if (assistantMsgError) throw assistantMsgError;
 
       // Upload generated mold STL to storage (if available)
-      if (output instanceof Blob) {
-        const moldFilename = `mold-${crypto.randomUUID()}.stl`;
+      if (generationResult?.pistonStl) {
+        const pistonBlob = decodeBase64ToBlob(
+          generationResult.pistonStl,
+          'model/stl',
+        );
         await supabase.storage
           .from('images')
-          .upload(`${user.id}/${conversation.id}/${moldFilename}`, output);
+          .upload(`${user.id}/${conversation.id}/mold-piston.stl`, pistonBlob);
+      }
+      if (generationResult?.bucketStl) {
+        const bucketBlob = decodeBase64ToBlob(
+          generationResult.bucketStl,
+          'model/stl',
+        );
+        await supabase.storage
+          .from('images')
+          .upload(`${user.id}/${conversation.id}/mold-bucket.stl`, bucketBlob);
       }
 
       toast({
@@ -533,7 +550,7 @@ export function MoldGeneratorView() {
     } finally {
       setIsSaving(false);
     }
-  }, [user, generatedCode, stlSource, config, output, navigate]);
+  }, [user, generatedCode, stlSource, config, generationResult, navigate]);
 
   return (
     <div className="flex h-full">
@@ -552,7 +569,7 @@ export function MoldGeneratorView() {
           <STLSourcePicker
             value={stlSource}
             onChange={handleSTLSelect}
-            disabled={isCompiling || isAnalyzing}
+            disabled={isGenerating || isAnalyzing}
           />
 
           {/* Tabs for Config / Analysis */}
@@ -578,7 +595,7 @@ export function MoldGeneratorView() {
                 config={config}
                 onChange={setConfig}
                 boundingBox={boundingBox}
-                disabled={isCompiling || !stlSource}
+                disabled={isGenerating || !stlSource}
               />
             </TabsContent>
 
@@ -600,7 +617,7 @@ export function MoldGeneratorView() {
             {!analysisResult && stlSource && (
               <Button
                 onClick={handleAnalyze}
-                disabled={isAnalyzing || isCompiling}
+                disabled={isAnalyzing || isGenerating}
                 variant="outline"
                 className="w-full"
               >
@@ -618,10 +635,10 @@ export function MoldGeneratorView() {
             {/* Generate Button */}
             <Button
               onClick={handleGenerate}
-              disabled={!stlSource || isCompiling || isAnalyzing}
+              disabled={!stlSource || isGenerating || isAnalyzing}
               className="w-full"
             >
-              {isCompiling ? (
+              {isGenerating ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   Generating...
@@ -630,28 +647,16 @@ export function MoldGeneratorView() {
                 'Generate Mold'
               )}
             </Button>
-
-            {/* Cancel Button (visible during compilation) */}
-            {isCompiling && (
-              <Button
-                onClick={cancelCompilation}
-                variant="outline"
-                className="w-full border-red-500/50 text-red-400 hover:bg-red-500/10"
-              >
-                <XCircle className="mr-2 h-4 w-4" />
-                Cancel Compilation
-              </Button>
-            )}
           </div>
 
           {/* Error display */}
-          {(error || analysisError) && (
+          {(generationError || analysisError) && (
             <Card className="border-red-500/30 bg-red-500/10 p-3">
               <p className="text-sm text-red-400">
-                {error
-                  ? error instanceof Error
-                    ? error.message
-                    : 'Compilation failed'
+                {generationError
+                  ? generationError instanceof Error
+                    ? generationError.message
+                    : 'Generation failed'
                   : analysisError instanceof Error
                     ? analysisError.message
                     : 'Analysis failed'}
@@ -660,7 +665,9 @@ export function MoldGeneratorView() {
           )}
 
           {/* Actions (when mold is generated) */}
-          {moldGeometry && (
+          {(pistonGeometry ||
+            bucketGeometry ||
+            (config.type === 'modular-box' && modularBoxGeometries.top)) && (
             <div className="space-y-2">
               <Button
                 variant="outline"
@@ -668,7 +675,9 @@ export function MoldGeneratorView() {
                 className="w-full"
               >
                 <Download className="mr-2 h-4 w-4" />
-                Download STL
+                {config.type === 'modular-box'
+                  ? 'Download All 3 Parts'
+                  : 'Download STL'}
               </Button>
               <Button
                 onClick={handleSaveAsCreation}
@@ -712,59 +721,125 @@ export function MoldGeneratorView() {
 
         {/* Generated Mold */}
         <div className="flex flex-col">
-          <h3 className="mb-2 text-sm font-medium text-adam-text-secondary">
-            Generated Mold
-          </h3>
+          <div className="mb-2 flex items-center justify-between">
+            <h3 className="text-sm font-medium text-adam-text-secondary">
+              Generated Mold
+            </h3>
+            {config.type === 'modular-box' && modularBoxGeometries.left && (
+              <div className="flex flex-wrap gap-1 rounded-md bg-adam-neutral-800 p-0.5">
+                {(['left', 'right', 'top'] as const).map((part) => (
+                  <button
+                    key={part}
+                    onClick={() => setMoldViewPart(part)}
+                    className={`rounded px-2 py-0.5 text-xs capitalize transition-colors ${
+                      moldViewPart === part
+                        ? 'bg-adam-blue text-white'
+                        : 'text-adam-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    {part === 'left'
+                      ? 'Left'
+                      : part === 'right'
+                        ? 'Right'
+                        : 'Top'}
+                  </button>
+                ))}
+              </div>
+            )}
+            {config.type !== 'modular-box' &&
+              (pistonGeometry || bucketGeometry) && (
+                <div className="flex gap-1 rounded-md bg-adam-neutral-800 p-0.5">
+                  <button
+                    onClick={() => setMoldViewPart('piston')}
+                    className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                      moldViewPart === 'piston'
+                        ? 'bg-adam-blue text-white'
+                        : 'text-adam-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    Piston
+                  </button>
+                  <button
+                    onClick={() => setMoldViewPart('bucket')}
+                    className={`rounded px-2 py-0.5 text-xs transition-colors ${
+                      moldViewPart === 'bucket'
+                        ? 'bg-adam-blue text-white'
+                        : 'text-adam-neutral-400 hover:text-white'
+                    }`}
+                  >
+                    Bucket
+                  </button>
+                </div>
+              )}
+          </div>
           <div className="flex-1 overflow-hidden rounded-lg border border-adam-neutral-700">
-            {isCompiling ? (
+            {isGenerating ? (
               <div className="flex h-full items-center justify-center bg-adam-background-1">
                 <div className="flex flex-col items-center gap-3 px-4 text-center">
                   <Loader2 className="h-8 w-8 animate-spin text-adam-blue" />
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-adam-neutral-300">
-                      {compilationStage || 'Compiling OpenSCAD...'}
-                    </p>
-                    <p className="text-xs text-adam-neutral-500">
-                      Elapsed: {(compilationElapsed / 1000).toFixed(1)}s
-                    </p>
-                  </div>
-
-                  {/* Warning at 30s */}
-                  {compilationElapsed > 30000 &&
-                    compilationElapsed < 120000 && (
-                      <div className="flex items-center gap-1.5 rounded-md bg-yellow-500/10 px-3 py-1.5">
-                        <AlertTriangle className="h-3.5 w-3.5 text-yellow-500" />
-                        <p className="text-xs text-yellow-400">
-                          Complex geometry may take several minutes
-                        </p>
-                      </div>
-                    )}
-
-                  {/* Warning at 120s */}
-                  {compilationElapsed >= 120000 && (
-                    <div className="flex items-center gap-1.5 rounded-md bg-orange-500/10 px-3 py-1.5">
-                      <AlertTriangle className="h-3.5 w-3.5 text-orange-500" />
-                      <p className="text-xs text-orange-400">
-                        Consider simplifying the model or cancelling
-                      </p>
-                    </div>
-                  )}
+                  <p className="text-sm font-medium text-adam-neutral-300">
+                    Generating mold...
+                  </p>
                 </div>
               </div>
             ) : (
-              <SimpleMeshViewer geometry={moldGeometry} color="#4ade80" />
+              <SimpleMeshViewer
+                geometry={getViewerGeometry()}
+                color={getViewerColor()}
+              />
             )}
           </div>
-          {moldGeometry && (
+          {hasMoldGeometry() && (
             <p className="mt-1 text-center text-xs text-adam-neutral-500">
-              {config.type === 'forged-carbon'
-                ? 'Bucket + Piston'
-                : 'Top + Bottom halves'}{' '}
-              (side by side)
+              {getMoldPartLabel()}
             </p>
           )}
         </div>
       </div>
     </div>
   );
+
+  // Helper functions for viewer
+  function getViewerGeometry(): THREE.BufferGeometry | null {
+    if (config.type === 'modular-box') {
+      const key = moldViewPart as keyof typeof modularBoxGeometries;
+      if (key in modularBoxGeometries) {
+        return modularBoxGeometries[key];
+      }
+    }
+    return moldViewPart === 'piston' ? pistonGeometry : bucketGeometry;
+  }
+
+  function getViewerColor(): string {
+    if (config.type === 'modular-box') {
+      const colors: Record<string, string> = {
+        left: '#a78bfa', // purple for left half
+        right: '#facc15', // yellow for right half
+        top: '#4ade80', // green for top piston
+      };
+      return colors[moldViewPart] ?? '#60a5fa';
+    }
+    return moldViewPart === 'piston' ? '#4ade80' : '#60a5fa';
+  }
+
+  function hasMoldGeometry(): boolean {
+    if (config.type === 'modular-box') {
+      return Object.values(modularBoxGeometries).some((g) => g !== null);
+    }
+    return pistonGeometry !== null || bucketGeometry !== null;
+  }
+
+  function getMoldPartLabel(): string {
+    if (config.type === 'modular-box') {
+      const labels: Record<string, string> = {
+        left: 'Left half (Y < 0)',
+        right: 'Right half (Y > 0)',
+        top: 'Top piston (compression plate)',
+      };
+      return labels[moldViewPart] ?? '';
+    }
+    return moldViewPart === 'piston'
+      ? 'Piston (top half)'
+      : 'Bucket (bottom half)';
+  }
 }

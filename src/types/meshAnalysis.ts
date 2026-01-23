@@ -248,7 +248,7 @@ export interface AnalysisOptions {
  */
 export interface MoldGenerationConfig {
   /** Mold type */
-  moldType: 'standard' | 'forged-carbon';
+  moldType: 'standard' | 'forged-carbon' | 'modular-box';
 
   /** Mold shape */
   moldShape: 'rectangular' | 'circular';
@@ -300,6 +300,16 @@ export interface MoldGenerationConfig {
     size: number;
     tolerance: number;
   };
+
+  /** Modular box configuration (6-sided bolt-together design) */
+  modularBox?: {
+    boltHoleDiameter: number;
+    boltSpacing: number;
+    pistonLeadIn: number;
+    fitTolerance: number;
+    compressionTravel: number;
+    handleHeight: number;
+  };
 }
 
 // =============================================================================
@@ -334,6 +344,22 @@ export interface MoldGenerationResult {
   /** Bucket STEP (for forged carbon) */
   bucketStep?: string;
 
+  /** Modular box STLs (6 parts) */
+  bottomStl?: string;
+  topStl?: string;
+  frontStl?: string;
+  backStl?: string;
+  leftStl?: string;
+  rightStl?: string;
+
+  /** Modular box STEPs (6 parts) */
+  bottomStep?: string;
+  topStep?: string;
+  frontStep?: string;
+  backStep?: string;
+  leftStep?: string;
+  rightStep?: string;
+
   /** Generation time in milliseconds */
   generationTimeMs: number;
 
@@ -343,5 +369,18 @@ export interface MoldGenerationResult {
     bucketVolume?: number;
     totalVolume?: number;
     shearEdgeArea?: number;
+    // Modular box stats
+    bottomVolume?: number;
+    topVolume?: number;
+    frontVolume?: number;
+    backVolume?: number;
+    leftVolume?: number;
+    rightVolume?: number;
+    partWidth?: number;
+    partDepth?: number;
+    partHeight?: number;
+    innerWidth?: number;
+    innerDepth?: number;
+    innerHeight?: number;
   };
 }

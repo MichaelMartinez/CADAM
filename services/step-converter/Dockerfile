@@ -36,7 +36,8 @@ RUN pip3 install --no-cache-dir \
     shapely==2.0.6 \
     scipy==1.14.1 \
     numpy==1.26.4 \
-    rtree==1.3.0
+    rtree==1.3.0 \
+    scikit-image==0.24.0
 
 # Install Build123D for mold generation (OpenCascade-based CAD)
 # This provides cleaner API than raw FreeCAD for programmatic geometry

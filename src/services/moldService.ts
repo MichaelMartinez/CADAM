@@ -210,6 +210,18 @@ export function moldConfigToGenerationConfig(
       size: moldConfig.keySize,
       tolerance: moldConfig.keyFettle,
     },
+
+    // Modular box configuration
+    modularBox: moldConfig.modularBox
+      ? {
+          boltHoleDiameter: moldConfig.modularBox.boltHoleDiameter,
+          boltSpacing: moldConfig.modularBox.boltSpacing,
+          pistonLeadIn: moldConfig.modularBox.pistonLeadIn,
+          fitTolerance: moldConfig.modularBox.fitTolerance,
+          compressionTravel: moldConfig.modularBox.compressionTravel,
+          handleHeight: moldConfig.modularBox.handleHeight,
+        }
+      : undefined,
   };
 }
 

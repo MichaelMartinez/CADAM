@@ -9,7 +9,7 @@
 // Core Types
 // =============================================================================
 
-export type MoldType = 'standard' | 'forged-carbon';
+export type MoldType = 'standard' | 'forged-carbon' | 'modular-box';
 export type MoldShape = 'rectangular' | 'circular';
 export type SplitAxis = 'x' | 'y' | 'z';
 export type KeyType = 'sphere' | 'cone';
@@ -97,6 +97,17 @@ export interface MoldConfig {
   // Profile generation method
   useProjectedProfile?: boolean; // Use alpha shape (true) vs bounding box (false)
 
+  // Modular box options (6-sided bolt-together design)
+  modularBox?: {
+    boltHoleDiameter: number; // M6 = 6.2mm clearance (default)
+    boltSpacing: number; // Max spacing between bolts (mm)
+    pistonLeadIn: number; // Chamfer on piston edges for easy insertion (mm)
+    fitTolerance: number; // Gap between piston and walls (mm)
+    compressionTravel: number; // Extra height for piston travel (mm)
+    handleHeight: number; // Height of handle on piston (mm)
+    splitAxis?: SplitAxis; // Axis to split part for compression mold (default: z)
+  };
+
   // Mold dimensions (auto-calculated or manual override)
   dimensions: MoldDimensions;
 }
@@ -182,6 +193,17 @@ export const DEFAULT_MOLD_CONFIG: MoldConfig = {
 
   // Profile generation
   useProjectedProfile: true, // Use alpha shape by default
+
+  // Modular box defaults (6-sided bolt-together design)
+  modularBox: {
+    boltHoleDiameter: 6.2, // M6 clearance
+    boltSpacing: 60, // Max 60mm between bolts
+    pistonLeadIn: 2, // 2mm chamfer for easy insertion
+    fitTolerance: 0.1, // 0.1mm gap between piston and walls
+    compressionTravel: 10, // 10mm extra height for travel
+    handleHeight: 15, // 15mm handle height
+    splitAxis: 'z', // Default: Z-axis split (horizontal cut at part midpoint)
+  },
 
   dimensions: {
     width: 0,
@@ -348,6 +370,32 @@ export function validateMoldConfig(
       }
       if (config.draftAngle > 5) {
         errors.push('Draft angle should not exceed 5 degrees');
+      }
+    }
+  }
+
+  // Modular box specific validation
+  if (config.type === 'modular-box') {
+    const mb = config.modularBox;
+    if (mb) {
+      if (mb.boltHoleDiameter < 3) {
+        errors.push('Bolt hole diameter must be at least 3mm');
+      }
+      if (mb.boltHoleDiameter > 12) {
+        warnings.push('Bolt hole diameter over 12mm may weaken wall structure');
+      }
+      if (mb.fitTolerance < 0.05) {
+        errors.push('Fit tolerance must be at least 0.05mm');
+      }
+      if (mb.fitTolerance > 0.5) {
+        warnings.push(
+          'Fit tolerance over 0.5mm may allow material to escape during compression',
+        );
+      }
+      if (mb.compressionTravel < 5) {
+        warnings.push(
+          'Compression travel under 5mm may not allow sufficient material compaction',
+        );
       }
     }
   }

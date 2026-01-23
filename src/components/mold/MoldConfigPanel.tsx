@@ -168,11 +168,11 @@ export function MoldConfigPanel({
           value={config.type}
           onValueChange={(value: MoldType) => updateConfig('type', value)}
           disabled={disabled}
-          className="grid grid-cols-2 gap-2"
+          className="grid grid-cols-3 gap-2"
         >
           <Label
             htmlFor="standard"
-            className={`flex cursor-pointer items-center justify-center rounded-lg border p-3 text-sm transition-colors ${config.type === 'standard' ? 'border-adam-blue bg-adam-blue/10 text-adam-text-primary' : 'border-adam-neutral-600 text-adam-text-secondary hover:border-adam-neutral-400'} ${disabled ? 'cursor-not-allowed opacity-50' : ''} `}
+            className={`flex cursor-pointer items-center justify-center rounded-lg border p-2 text-xs transition-colors ${config.type === 'standard' ? 'border-adam-blue bg-adam-blue/10 text-adam-text-primary' : 'border-adam-neutral-600 text-adam-text-secondary hover:border-adam-neutral-400'} ${disabled ? 'cursor-not-allowed opacity-50' : ''} `}
           >
             <RadioGroupItem
               value="standard"
@@ -183,7 +183,7 @@ export function MoldConfigPanel({
           </Label>
           <Label
             htmlFor="forged-carbon"
-            className={`flex cursor-pointer items-center justify-center rounded-lg border p-3 text-sm transition-colors ${config.type === 'forged-carbon' ? 'border-adam-blue bg-adam-blue/10 text-adam-text-primary' : 'border-adam-neutral-600 text-adam-text-secondary hover:border-adam-neutral-400'} ${disabled ? 'cursor-not-allowed opacity-50' : ''} `}
+            className={`flex cursor-pointer items-center justify-center rounded-lg border p-2 text-xs transition-colors ${config.type === 'forged-carbon' ? 'border-adam-blue bg-adam-blue/10 text-adam-text-primary' : 'border-adam-neutral-600 text-adam-text-secondary hover:border-adam-neutral-400'} ${disabled ? 'cursor-not-allowed opacity-50' : ''} `}
           >
             <RadioGroupItem
               value="forged-carbon"
@@ -192,11 +192,24 @@ export function MoldConfigPanel({
             />
             Forged Carbon
           </Label>
+          <Label
+            htmlFor="modular-box"
+            className={`flex cursor-pointer items-center justify-center rounded-lg border p-2 text-xs transition-colors ${config.type === 'modular-box' ? 'border-adam-blue bg-adam-blue/10 text-adam-text-primary' : 'border-adam-neutral-600 text-adam-text-secondary hover:border-adam-neutral-400'} ${disabled ? 'cursor-not-allowed opacity-50' : ''} `}
+          >
+            <RadioGroupItem
+              value="modular-box"
+              id="modular-box"
+              className="sr-only"
+            />
+            Modular Box
+          </Label>
         </RadioGroup>
         <p className="text-xs text-adam-neutral-500">
           {config.type === 'standard'
             ? 'Two halves with pour hole for casting liquid materials'
-            : 'Piston + bucket design for compression molding'}
+            : config.type === 'forged-carbon'
+              ? 'Piston + bucket design for compression molding'
+              : '3-piece split mold: left/right halves + top piston'}
         </p>
       </div>
 
@@ -721,6 +734,228 @@ export function MoldConfigPanel({
      ├───────┘       ┃
      │←──clearance──→┃
      │               ┃`}
+            </pre>
+          </div>
+        </Card>
+      )}
+
+      {/* Modular Box Configuration */}
+      {config.type === 'modular-box' && (
+        <Card className="border-adam-neutral-700 bg-adam-background-1 p-3">
+          <Label className="mb-3 block text-sm font-medium text-adam-text-secondary">
+            Modular Box Settings
+          </Label>
+          <p className="mb-3 text-xs text-adam-neutral-500">
+            3-piece compression mold: Part is split at{' '}
+            {config.splitAxis.toUpperCase()}-axis midpoint. Lower half → cavity
+            in left/right sides. Upper half → male protrusion on piston.
+          </p>
+
+          {/* Split Axis Info for Modular Box */}
+          <div className="mb-4 rounded-md bg-adam-blue/10 p-2">
+            <p className="text-xs text-adam-blue">
+              <strong>Split Axis ({config.splitAxis.toUpperCase()}):</strong>{' '}
+              {config.splitAxis === 'z'
+                ? 'Part split horizontally. Piston compresses from top.'
+                : config.splitAxis === 'x'
+                  ? 'Part split along X. Good for vertical through-holes.'
+                  : 'Part split along Y. Good for front-back symmetry.'}
+            </p>
+          </div>
+
+          <div className="space-y-4">
+            {/* Bolt Hole Diameter */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Bolt Hole Diameter
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  M{Math.round(config.modularBox?.boltHoleDiameter ?? 6)} (
+                  {config.modularBox?.boltHoleDiameter ?? 6.2}mm)
+                </span>
+              </div>
+              <Slider
+                value={[config.modularBox?.boltHoleDiameter ?? 6.2]}
+                onValueChange={([value]) =>
+                  updateConfig('modularBox', {
+                    ...config.modularBox,
+                    boltHoleDiameter: value,
+                    boltSpacing: config.modularBox?.boltSpacing ?? 60,
+                    pistonLeadIn: config.modularBox?.pistonLeadIn ?? 2,
+                    fitTolerance: config.modularBox?.fitTolerance ?? 0.1,
+                    compressionTravel:
+                      config.modularBox?.compressionTravel ?? 10,
+                    handleHeight: config.modularBox?.handleHeight ?? 15,
+                  })
+                }
+                min={3.2}
+                max={10.2}
+                step={1}
+                disabled={disabled}
+              />
+              <p className="text-xs text-adam-neutral-500">
+                M3=3.2mm, M4=4.2mm, M5=5.2mm, M6=6.2mm, M8=8.2mm
+              </p>
+            </div>
+
+            {/* Fit Tolerance */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Piston Fit Tolerance
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.modularBox?.fitTolerance ?? 0.1}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.modularBox?.fitTolerance ?? 0.1]}
+                onValueChange={([value]) =>
+                  updateConfig('modularBox', {
+                    ...config.modularBox,
+                    fitTolerance: value,
+                    boltHoleDiameter:
+                      config.modularBox?.boltHoleDiameter ?? 6.2,
+                    boltSpacing: config.modularBox?.boltSpacing ?? 60,
+                    pistonLeadIn: config.modularBox?.pistonLeadIn ?? 2,
+                    compressionTravel:
+                      config.modularBox?.compressionTravel ?? 10,
+                    handleHeight: config.modularBox?.handleHeight ?? 15,
+                  })
+                }
+                min={0.05}
+                max={0.5}
+                step={0.05}
+                disabled={disabled}
+              />
+              <p className="text-xs text-adam-neutral-500">
+                Gap between piston and walls (tighter = less flash)
+              </p>
+            </div>
+
+            {/* Compression Travel */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Compression Travel
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.modularBox?.compressionTravel ?? 10}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.modularBox?.compressionTravel ?? 10]}
+                onValueChange={([value]) =>
+                  updateConfig('modularBox', {
+                    ...config.modularBox,
+                    compressionTravel: value,
+                    boltHoleDiameter:
+                      config.modularBox?.boltHoleDiameter ?? 6.2,
+                    boltSpacing: config.modularBox?.boltSpacing ?? 60,
+                    pistonLeadIn: config.modularBox?.pistonLeadIn ?? 2,
+                    fitTolerance: config.modularBox?.fitTolerance ?? 0.1,
+                    handleHeight: config.modularBox?.handleHeight ?? 15,
+                  })
+                }
+                min={5}
+                max={30}
+                step={5}
+                disabled={disabled}
+              />
+              <p className="text-xs text-adam-neutral-500">
+                Extra height above part for piston travel
+              </p>
+            </div>
+
+            {/* Piston Lead-In */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Piston Lead-In Chamfer
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.modularBox?.pistonLeadIn ?? 2}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.modularBox?.pistonLeadIn ?? 2]}
+                onValueChange={([value]) =>
+                  updateConfig('modularBox', {
+                    ...config.modularBox,
+                    pistonLeadIn: value,
+                    boltHoleDiameter:
+                      config.modularBox?.boltHoleDiameter ?? 6.2,
+                    boltSpacing: config.modularBox?.boltSpacing ?? 60,
+                    fitTolerance: config.modularBox?.fitTolerance ?? 0.1,
+                    compressionTravel:
+                      config.modularBox?.compressionTravel ?? 10,
+                    handleHeight: config.modularBox?.handleHeight ?? 15,
+                  })
+                }
+                min={0}
+                max={5}
+                step={0.5}
+                disabled={disabled}
+              />
+              <p className="text-xs text-adam-neutral-500">
+                Edge chamfer for easier piston insertion
+              </p>
+            </div>
+
+            {/* Handle Height */}
+            <div className="space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-adam-neutral-400">
+                  Handle Height
+                </span>
+                <span className="text-xs text-adam-text-primary">
+                  {config.modularBox?.handleHeight ?? 15}mm
+                </span>
+              </div>
+              <Slider
+                value={[config.modularBox?.handleHeight ?? 15]}
+                onValueChange={([value]) =>
+                  updateConfig('modularBox', {
+                    ...config.modularBox,
+                    handleHeight: value,
+                    boltHoleDiameter:
+                      config.modularBox?.boltHoleDiameter ?? 6.2,
+                    boltSpacing: config.modularBox?.boltSpacing ?? 60,
+                    pistonLeadIn: config.modularBox?.pistonLeadIn ?? 2,
+                    fitTolerance: config.modularBox?.fitTolerance ?? 0.1,
+                    compressionTravel:
+                      config.modularBox?.compressionTravel ?? 10,
+                  })
+                }
+                min={10}
+                max={30}
+                step={5}
+                disabled={disabled}
+              />
+            </div>
+          </div>
+
+          {/* Modular Box Diagram */}
+          <div className="mt-4 rounded-md bg-adam-background-2 p-2">
+            <p className="mb-1 text-xs font-medium text-adam-text-secondary">
+              3-piece compression mold (split at{' '}
+              {config.splitAxis.toUpperCase()}):
+            </p>
+            <pre className="text-[10px] leading-tight text-adam-neutral-400">
+              {`      ┌─────────────────┐
+      │     FLANGE      │ ← sits on mold
+      ├─────────────────┤
+      │ ╔═════════════╗ │ ← UPPER HALF
+      │ ║  (solid)    ║ │   of part as
+      │ ╚═════════════╝ │   male protrusion
+   ───┴─────────────────┴───
+   │ LEFT    │    RIGHT │
+   │ ┌───────┴───────┐  │ ← LOWER HALF
+   │ │   (cavity)    │  │   of part as
+   │ └───────────────┘  │   female cavity
+   └────────────────────┘
+        Y=0 parting line`}
             </pre>
           </div>
         </Card>

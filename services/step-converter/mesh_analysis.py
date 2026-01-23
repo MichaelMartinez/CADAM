@@ -526,11 +526,21 @@ def compute_alpha_shape(mesh, axis: str, alpha: float = 0.1) -> Optional[Dict[st
         if polygon_points is None or len(polygon_points) < 3:
             return compute_convex_hull_2d(mesh, axis)
 
-        # Create shapely polygon for area/perimeter
+        # Create shapely polygon for area/perimeter and validation
         try:
             polygon = Polygon(polygon_points)
             if not polygon.is_valid:
-                polygon = polygon.buffer(0)  # Fix self-intersections
+                # Fix self-intersections - this can produce MultiPolygon
+                fixed = polygon.buffer(0)
+                if fixed.geom_type == 'Polygon':
+                    polygon = fixed
+                    # Use the fixed polygon's exterior coordinates
+                    polygon_points = np.array(list(polygon.exterior.coords)[:-1])
+                elif fixed.geom_type == 'MultiPolygon':
+                    # Use the largest polygon from the result
+                    largest = max(fixed.geoms, key=lambda g: g.area)
+                    polygon = largest
+                    polygon_points = np.array(list(polygon.exterior.coords)[:-1])
             area = polygon.area
             perimeter = polygon.length
         except Exception:
