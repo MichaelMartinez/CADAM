@@ -1237,8 +1237,21 @@ def generate_modular_box_mold(
         # === COMPUTE PISTON PROFILE FROM ALPHA SHAPE ===
         # The piston outer profile should match the part's contour (alpha shape)
         # so it descends like a matched die, containing material properly
-        if alpha_shape_points and len(alpha_shape_points) >= 3:
-            # Use alpha shape as piston profile
+        #
+        # IMPORTANT: Contour-following only works correctly for Z-split because:
+        # - The piston always compresses along Z (enters from above)
+        # - The alpha shape is computed as XY projection (axis='z')
+        # - For Y-split or X-split, the geometry logic conflicts with the mold parting line
+        #
+        # For non-Z split axes, fall back to rectangular profile until the
+        # geometry is properly reimplemented for those cases.
+        if split_axis != 'z':
+            print(f"  NOTE: Contour-following disabled for {split_axis.upper()}-split (using rectangular)")
+            use_contour_profile = False
+            hw, hd = part_width / 2, part_depth / 2
+            piston_profile_pts = [(-hw, -hd), (hw, -hd), (hw, hd), (-hw, hd)]
+        elif alpha_shape_points and len(alpha_shape_points) >= 3:
+            # Use alpha shape as piston profile (Z-split only)
             piston_profile_pts = [(float(p[0]), float(p[1])) for p in alpha_shape_points]
             print(f"Using alpha shape profile with {len(piston_profile_pts)} points")
             use_contour_profile = True
