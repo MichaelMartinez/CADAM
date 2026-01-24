@@ -1262,16 +1262,70 @@ def generate_modular_box_mold(
             print("Using rectangular bounding box profile (no alpha shape)")
             use_contour_profile = False
 
-        # Compute clearance profile by offsetting the piston profile outward
-        # This creates the opening in the mold halves that accepts the piston
-        clearance_profile_pts = offset_polygon(piston_profile_pts, fit_tolerance)
-        print(f"Clearance profile: {len(clearance_profile_pts)} points (offset by {fit_tolerance}mm)")
+        # === CONTOUR-FOLLOWING INNER CAVITY DESIGN ===
+        # The mold inner opening follows the part contour ALL THE WAY through
+        # (from floor to top), not just at the clearance zone. This eliminates
+        # ledges/slivers at the transition from walls to cavity.
+        #
+        # Profile hierarchy:
+        #   - Mold inner opening = alpha shape (piston_profile_pts)
+        #   - Piston outer = alpha shape - fit_tolerance (fits inside opening)
+        #
+        # The rectangular OUTER box provides structure/clamping; the contour
+        # INNER opening provides material containment and matched-die compression.
 
-        # Pre-compute left/right halves of clearance profile (split at Y=0)
-        # These are used for the clearance openings in left/right mold halves
-        left_clearance_pts = clip_polygon_to_half(clearance_profile_pts, y_max=0.0)
-        right_clearance_pts = clip_polygon_to_half(clearance_profile_pts, y_min=0.0)
-        print(f"  Left clearance: {len(left_clearance_pts)} points, Right clearance: {len(right_clearance_pts)} points")
+        # Pre-compute left/right halves of the contour profile (split at Y=0)
+        # These define the inner openings in left/right mold halves
+        print(f"\n=== CONTOUR PROFILE CLIPPING ===")
+        print(f"Input profile: {len(piston_profile_pts)} points")
+
+        # Log input profile bounds
+        if piston_profile_pts:
+            xs = [p[0] for p in piston_profile_pts]
+            ys = [p[1] for p in piston_profile_pts]
+            print(f"  X range: [{min(xs):.2f}, {max(xs):.2f}]")
+            print(f"  Y range: [{min(ys):.2f}, {max(ys):.2f}]")
+
+        left_contour_pts = clip_polygon_to_half(piston_profile_pts, y_max=0.0)
+        right_contour_pts = clip_polygon_to_half(piston_profile_pts, y_min=0.0)
+
+        print(f"Left contour (Y < 0): {len(left_contour_pts)} points")
+        print(f"Right contour (Y > 0): {len(right_contour_pts)} points")
+
+        # Validate clipped polygons - need at least 3 points for a valid polygon
+        # Also check that the polygon is valid (not self-intersecting)
+        def validate_polygon(pts, name):
+            """Validate polygon and return (is_valid, reason)"""
+            if not pts:
+                return False, "empty points list"
+            if len(pts) < 3:
+                return False, f"only {len(pts)} points (need >= 3)"
+            try:
+                from shapely.geometry import Polygon as ShapelyPolygon
+                poly = ShapelyPolygon(pts)
+                if not poly.is_valid:
+                    # Try to get the reason
+                    from shapely.validation import explain_validity
+                    reason = explain_validity(poly)
+                    return False, f"invalid geometry: {reason}"
+                if poly.area < 0.01:
+                    return False, f"area too small ({poly.area:.4f} mm²)"
+                return True, f"valid (area={poly.area:.2f} mm²)"
+            except ImportError:
+                # Shapely not available, basic validation
+                return len(pts) >= 3, "basic validation only (shapely unavailable)"
+            except Exception as e:
+                return False, f"validation error: {e}"
+
+        left_contour_valid, left_reason = validate_polygon(left_contour_pts, "left")
+        right_contour_valid, right_reason = validate_polygon(right_contour_pts, "right")
+
+        print(f"  Left validation: {left_reason}")
+        print(f"  Right validation: {right_reason}")
+
+        if not left_contour_valid or not right_contour_valid:
+            print(f"  WARNING: Invalid clipped contour detected")
+            print(f"  Will fall back to rectangular profile for affected halves")
 
         # Convert mesh to solid for mold cavity
         part_solid = mesh_to_solid_build123d(mesh)
@@ -1342,16 +1396,14 @@ def generate_modular_box_mold(
         # Mold height based on lower half + stroke (upper half is on piston)
         mold_height = floor_thickness + lower_height + stroke
 
-        # Clearance opening dimensions (for piston entry)
-        # CRITICAL: Clearance must be at least as large as full part dimensions
-        # to avoid slivers/ledges at the cavity-to-clearance transition
-        # (per lessons-learned: "Always extend clearance cuts to avoid ledges/steps")
-        clearance_width = max(upper_width, part_width) + 2 * fit_tolerance
-        clearance_depth = max(upper_depth, part_depth) + 2 * fit_tolerance
-        clearance_height = stroke
+        # Inner opening dimensions (for rectangular fallback when not using contour profile)
+        # The mold inner opening should match the part's profile (bounding box for rectangular)
+        # The piston is then inset by fit_tolerance to create the sliding fit gap.
+        inner_opening_width = max(upper_width, part_width)
+        inner_opening_depth = max(upper_depth, part_depth)
 
         print(f"Mold dimensions: {mold_width:.2f} x {mold_depth:.2f} x {mold_height:.2f} mm")
-        print(f"Clearance opening: {clearance_width:.2f} x {clearance_depth:.2f} mm")
+        print(f"Inner opening: {inner_opening_width:.2f} x {inner_opening_depth:.2f} mm (rectangular fallback)")
 
         # === SPLIT LOWER HALF AT Y=0 FOR LEFT/RIGHT MOLD HALVES ===
         # The parting line is always at Y=0 for the mold halves
@@ -1362,49 +1414,67 @@ def generate_modular_box_mold(
             lower_left, lower_right = None, None
 
         # === CREATE LEFT MOLD HALF (Y < 0) ===
+        # The inner opening follows the part contour ALL THE WAY through (floor to top).
+        # This creates smooth contour-following walls with no ledges or transitions.
         print("Creating left mold half...")
-        clearance_z_start = floor_thickness + lower_height
+        contour_cut_height = mold_height - floor_thickness  # Full height above floor
         with BuildPart() as left_builder:
-            # Create left half of mold box
+            # 1. Create rectangular outer box (for structure/clamping)
             Box(mold_width, mold_depth / 2, mold_height,
                 align=(Align.CENTER, Align.MAX, Align.MIN))  # MAX aligns Y to 0
 
-            # Subtract only the LOWER-LEFT portion of the part
+            # 2. Cut contour opening ALL THE WAY through (floor to top)
+            #    This creates the contour-following inner walls
+            with BuildSketch(Plane.XY.offset(floor_thickness)):
+                if use_contour_profile and left_contour_valid:
+                    try:
+                        Polygon(left_contour_pts)
+                    except Exception as poly_err:
+                        print(f"  WARNING: Left contour polygon failed: {poly_err}")
+                        # Fall back to rectangle
+                        with Locations([(0, -inner_opening_depth / 4)]):
+                            Rectangle(inner_opening_width, inner_opening_depth / 2)
+                else:
+                    # Rectangular fallback: half-rectangle for left side (Y < 0)
+                    with Locations([(0, -inner_opening_depth / 4)]):
+                        Rectangle(inner_opening_width, inner_opening_depth / 2)
+            extrude(amount=contour_cut_height, mode=Mode.SUBTRACT)
+
+            # 3. Subtract part cavity (lower-left portion) at floor level
+            #    This is a subset of the contour opening, adding detail to the floor
             if lower_left is not None:
                 add(lower_left, mode=Mode.SUBTRACT)
-
-            # Cut clearance for piston (where upper half protrusion enters)
-            # Use contour-following profile if available, otherwise fall back to rectangle
-            with BuildSketch(Plane.XY.offset(clearance_z_start)):
-                if use_contour_profile and len(left_clearance_pts) >= 3:
-                    Polygon(left_clearance_pts)
-                else:
-                    with Locations([(0, -clearance_depth / 4)]):
-                        Rectangle(clearance_width, clearance_depth / 2)
-            extrude(amount=clearance_height, mode=Mode.SUBTRACT)
 
         left_half = left_builder.part
         print(f"  Left half volume: {left_half.volume:.2f} mm³")
 
         # === CREATE RIGHT MOLD HALF (Y > 0) ===
+        # Same contour-following approach as left half
         print("Creating right mold half...")
         with BuildPart() as right_builder:
-            # Create right half of mold box
+            # 1. Create rectangular outer box (for structure/clamping)
             Box(mold_width, mold_depth / 2, mold_height,
                 align=(Align.CENTER, Align.MIN, Align.MIN))  # MIN aligns Y to 0
 
-            # Subtract only the LOWER-RIGHT portion of the part
+            # 2. Cut contour opening ALL THE WAY through (floor to top)
+            with BuildSketch(Plane.XY.offset(floor_thickness)):
+                if use_contour_profile and right_contour_valid:
+                    try:
+                        Polygon(right_contour_pts)
+                    except Exception as poly_err:
+                        print(f"  WARNING: Right contour polygon failed: {poly_err}")
+                        # Fall back to rectangle
+                        with Locations([(0, inner_opening_depth / 4)]):
+                            Rectangle(inner_opening_width, inner_opening_depth / 2)
+                else:
+                    # Rectangular fallback: half-rectangle for right side (Y > 0)
+                    with Locations([(0, inner_opening_depth / 4)]):
+                        Rectangle(inner_opening_width, inner_opening_depth / 2)
+            extrude(amount=contour_cut_height, mode=Mode.SUBTRACT)
+
+            # 3. Subtract part cavity (lower-right portion) at floor level
             if lower_right is not None:
                 add(lower_right, mode=Mode.SUBTRACT)
-
-            # Cut clearance for piston (contour-following profile)
-            with BuildSketch(Plane.XY.offset(clearance_z_start)):
-                if use_contour_profile and len(right_clearance_pts) >= 3:
-                    Polygon(right_clearance_pts)
-                else:
-                    with Locations([(0, clearance_depth / 4)]):
-                        Rectangle(clearance_width, clearance_depth / 2)
-            extrude(amount=clearance_height, mode=Mode.SUBTRACT)
 
         right_half = right_builder.part
         print(f"  Right half volume: {right_half.volume:.2f} mm³")
@@ -1443,8 +1513,9 @@ def generate_modular_box_mold(
         right_part = right_with_bolts.part
 
         # === CREATE PISTON WITH UPPER HALF AS MALE PROTRUSION ===
-        # This is the key change: piston contains the UPPER half of the part
-        # as a solid male form, not just a shallow impression
+        # The piston outer profile matches the mold inner opening minus fit_tolerance,
+        # allowing it to slide into the contour-following cavity with proper clearance.
+        # The upper half of the part is subtracted to create the male protrusion cavity.
         print("Creating piston with upper-half male protrusion...")
 
         # Flange dimensions (sits on top of mold halves)
@@ -1452,22 +1523,31 @@ def generate_modular_box_mold(
         flange_depth = mold_depth
         flange_thickness = plate_thickness
 
-        # Piston body (fits into clearance opening)
-        # For contour-following: piston profile is the alpha shape, clearance is offset outward
-        # The piston body uses the piston_profile_pts directly (gap provided by clearance offset)
-        piston_body_clearance = 0.2  # Running clearance between piston and mold opening
-        piston_body_width = clearance_width - 0.4  # Fallback dimensions
-        piston_body_depth = clearance_depth - 0.4
+        # Piston body fits into contour opening with fit_tolerance gap
+        # Profile hierarchy:
+        #   Mold inner opening = alpha shape (piston_profile_pts)
+        #   Piston outer = alpha shape - fit_tolerance
+        # This gives a fit_tolerance gap all around for smooth sliding fit.
+        #
         # Piston body must be tall enough for: stroke travel + cavity depth (upper_height)
         piston_body_height = stroke + upper_height
 
-        # Compute piston body profile (slightly smaller than piston_profile for running clearance)
+        # Rectangular fallback dimensions (mold opening minus 2*fit_tolerance for gap on each side)
+        piston_body_width = inner_opening_width - 2 * fit_tolerance
+        piston_body_depth = inner_opening_depth - 2 * fit_tolerance
+
+        # Compute piston body profile (offset inward by fit_tolerance for sliding fit)
+        piston_body_valid = False
         if use_contour_profile:
-            piston_body_profile_pts = offset_polygon(piston_profile_pts, -piston_body_clearance)
-            print(f"  Piston body: contour-following profile with {len(piston_body_profile_pts)} points")
+            piston_body_profile_pts = offset_polygon(piston_profile_pts, -fit_tolerance)
+            piston_body_valid, piston_reason = validate_polygon(piston_body_profile_pts, "piston_body")
+            print(f"  Piston body: contour-following profile with {len(piston_body_profile_pts)} points (offset: -{fit_tolerance}mm)")
+            print(f"  Piston body validation: {piston_reason}")
+            if not piston_body_valid:
+                print(f"  WARNING: Piston body profile invalid, falling back to rectangular")
         else:
             piston_body_profile_pts = None
-            print(f"  Piston body: {piston_body_width:.1f} x {piston_body_depth:.1f} mm (rectangular)")
+            print(f"  Piston body: {piston_body_width:.1f} x {piston_body_depth:.1f} mm (rectangular, gap: {fit_tolerance}mm)")
 
         print(f"  Flange: {flange_width:.1f} x {flange_depth:.1f} x {flange_thickness:.1f} mm")
         print(f"  Piston body height: {piston_body_height:.1f} mm")
@@ -1479,8 +1559,12 @@ def generate_modular_box_mold(
 
             # Add piston body extending downward (contour-following or rectangular)
             with BuildSketch(Plane.XY):
-                if use_contour_profile and piston_body_profile_pts and len(piston_body_profile_pts) >= 3:
-                    Polygon(piston_body_profile_pts)
+                if use_contour_profile and piston_body_valid:
+                    try:
+                        Polygon(piston_body_profile_pts)
+                    except Exception as poly_err:
+                        print(f"  WARNING: Piston body polygon failed: {poly_err}")
+                        Rectangle(piston_body_width, piston_body_depth)
                 else:
                     Rectangle(piston_body_width, piston_body_depth)
             extrude(amount=-piston_body_height)
