@@ -8,6 +8,8 @@ services:
     ports:
       - '8080:8080'
     environment:
+      # Force immediate log output (no buffering)
+      - PYTHONUNBUFFERED=1
       # API authentication secret (leave empty to disable auth for dev)
       - STEP_CONVERTER_API_SECRET=${STEP_CONVERTER_API_SECRET:-}
       # Job expiry time in seconds (default 5 minutes)

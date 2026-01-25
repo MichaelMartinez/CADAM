@@ -53,6 +53,9 @@ COPY main.py /app/
 COPY mesh_analysis.py /app/
 COPY mold_generator.py /app/
 
+# Copy molds package (refactored mold implementations)
+COPY molds/ /app/molds/
+
 # Create temp directory for conversions
 RUN mkdir -p /tmp/conversions
 

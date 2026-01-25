@@ -147,3 +147,33 @@ substantial part geometry as a MALE form that compresses material.
 - `services/step-converter/mold_generator.py`: `split_solid_at_plane()`, `generate_modular_box_mold()`
 - `src/types/mold.ts`: `splitAxis` in `modularBox` config
 - `src/components/mold/MoldConfigPanel.tsx`: Split axis UI and diagram
+
+---
+
+## Issue: Contour Profile Mismatch (Piston Opening Ledges)
+
+**Symptom:** Left and right mold halves have "overhangs" or "shelves" inside the cavity. The contour-following piston opening doesn't extend all the way to the top face. The piston would not fit properly.
+
+**Cause:** In `_create_mold_half()`, the contour profile (from alpha shape) doesn't perfectly match the actual part's XY footprint after:
+
+1. Mesh-to-solid conversion
+2. Z-axis split at part midpoint
+3. Y-axis split at Y=0
+
+When the solid extends beyond the alpha shape in some areas, subtracting the part creates cavity space that wasn't cut by the contour extrusion, creating a ledge.
+
+**Solution:** Derive the mold opening profile from the **actual solid's XY projection** rather than from the alpha shape. This guarantees the opening always matches or exceeds the part footprint.
+
+**Implementation:**
+
+1. Added `extract_solid_xy_footprint()` helper in `molds/utils.py`
+2. Modified `_create_mold_half()` to extract opening profile from `part_half` solid
+3. Falls back to alpha shape contour if projection fails
+4. Falls back to bounding box rectangle as last resort
+
+**Key Principle:** Always derive the mold opening profile from the actual solid being subtracted, not from an approximation of the original mesh.
+
+**Files:**
+
+- `services/step-converter/molds/utils.py`: `extract_solid_xy_footprint()`
+- `services/step-converter/molds/modular_box.py`: `_create_mold_half()`

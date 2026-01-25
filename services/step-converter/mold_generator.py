@@ -3,6 +3,10 @@ Mold Generator Module
 
 Uses Build123D (OpenCascade-based) to generate compression molds from STL meshes.
 Supports forged carbon two-part molds with proper shear edge geometry.
+
+The mold implementations are organized in the molds/ package:
+- molds.modular_box: ModularBoxMold for 3-piece split-cavity molds
+- molds.base: CoordinateTracker for proper coordinate handling
 """
 
 import time
@@ -12,6 +16,17 @@ import os
 from io import BytesIO
 from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
+
+# Import the refactored molds package
+MOLDS_PACKAGE_AVAILABLE = False
+try:
+    from molds import ModularBoxMold, prepare_mesh, setup_mold_logger
+    MOLDS_PACKAGE_AVAILABLE = True
+    print("INFO: molds package loaded successfully")
+except ImportError as e:
+    print(f"WARNING: molds package import failed: {e}")
+    import traceback
+    traceback.print_exc()
 
 try:
     import trimesh
@@ -209,15 +224,28 @@ def generate_mold(
         # Load mesh
         mesh = trimesh.load(BytesIO(stl_data), file_type='stl')
 
-        # Ensure mesh is centered
-        mesh.vertices -= mesh.centroid
+        # Parse config with defaults (before any mesh operations)
+        mold_type = config.get("moldType", "forged-carbon")
+
+        # CRITICAL FIX: Center mesh using BOUNDING BOX center, not centroid!
+        # Centroid (center of mass) differs from geometric center for parts with
+        # holes or asymmetric geometry, causing asymmetric mold halves.
+        #
+        # For modular-box molds, we use the refactored molds package which
+        # handles centering correctly via prepare_mesh().
+        if mold_type == "modular-box" and MOLDS_PACKAGE_AVAILABLE:
+            # Let ModularBoxMold handle centering via its BaseMold.__init__
+            # which uses prepare_mesh() with bounding box centering
+            pass  # Don't center here
+        else:
+            # Legacy centering for forged-carbon and standard molds
+            # TODO: Migrate these to use prepare_mesh() as well
+            bbox_center = (mesh.bounds[0] + mesh.bounds[1]) / 2
+            mesh.vertices -= bbox_center
 
         # Get bounding box
         bounds = mesh.bounds
         bbox = bounds[1] - bounds[0]
-
-        # Parse config with defaults
-        mold_type = config.get("moldType", "forged-carbon")
         mold_shape = config.get("moldShape", "rectangular")
         orientation = config.get("orientation", "z")
         shear_edge_gap = config.get("shearEdgeGap", 0.075)
@@ -266,13 +294,26 @@ def generate_mold(
                 output_format=output_format
             )
         elif mold_type == "modular-box":
-            result = generate_modular_box_mold(
-                mesh=mesh,
-                bbox=bbox,
-                config=config,
-                alpha_shape_points=computed_alpha_points if use_alpha_shape else None,
-                output_format=output_format
-            )
+            # Use the refactored ModularBoxMold class from molds package
+            if MOLDS_PACKAGE_AVAILABLE:
+                print("Using ModularBoxMold from molds package")
+                mold = ModularBoxMold(
+                    mesh=mesh,
+                    config=config,
+                    alpha_shape_points=computed_alpha_points if use_alpha_shape else None,
+                    output_format=output_format
+                )
+                result = mold.generate()
+            else:
+                # Fallback to inline implementation if molds package not available
+                print("WARNING: molds package not available, using legacy implementation")
+                result = generate_modular_box_mold(
+                    mesh=mesh,
+                    bbox=bbox,
+                    config=config,
+                    alpha_shape_points=computed_alpha_points if use_alpha_shape else None,
+                    output_format=output_format
+                )
         else:
             result = generate_standard_mold(
                 mesh=mesh,

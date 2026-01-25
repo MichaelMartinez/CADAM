@@ -1,0 +1,147 @@
+Building a compression mold with a piston in build123d involves importing an STL, defining a mold block, using Boolean operations to create the cavity, and designing a telescoping piston for compression. The process ensures a tight fit, allowing excess material (flash) to escape while maintaining pressure on the part. 
+Step-by-Step Guide:
+Import and Position STL: Import the STL part file and position it at the center of the workplane. Orient the part so the largest surface faces up for easiest demolding.
+Define Mold Boundary: Create a sketch (Rectangle) around the part. Extrude this sketch (extrude) into a solid block, ensuring the block is taller than the part to allow space for the piston.
+Create Cavity (Boolean Cut): Use the boolean_cut operation to subtract the STL part from the mold block, leaving a negative impression (the cavity).
+Create Parting Line/Split: Split the mold into at least two parts (top/bottom) using the split_body function at the widest point of the part.
+Design the Piston (Male Die): Create a new sketch to represent the piston shape, based on the top opening of the cavity.
+Extrude Piston with Draft: Extrude this piston sketch, adding a 2-3 degree draft angle to the sides. The piston should be designed to extend at least 25% of the total component depth to allow for proper compression.
+Add Registration Features: Create alignment features, such as cylinders (male) and holes (female), on the parting faces to ensure the mold halves align perfectly.
+Finalize and Export: Combine parts, apply fillets to sharp corners to prevent stress concentration, and export each component (bottom mold, top mold, piston) as a new STL file for printing. 
+Ensure the mold walls are thick enough to withstand pressure (at least 10mm recommended) and consider using heat-resistant filament like PETG or specialized resin for 3D printing the mold. 
+
+Creating a compression mold in build123d (v0.10.x and newer) involves importing an STL as a solid body using the Mesher class, then using Algebra Mode or Builder Mode to perform Boolean subtractions from a mold block. 
+1. Import and Prepare the STL
+First, import your STL file. In build123d, the Mesher class can read mesh files and treat them as solid objects for CAD operations. 
+python
+from build123d import *
+
+# Load the STL as a solid body
+importer = Mesher()
+part_stl = importer.read("your_part.stl")[0] 
+
+# Center and orient your part as needed
+part_stl = part_stl.center(CenterOf.BOUNDING_BOX)
+Use code with caution.
+
+2. Create the Mold Cavity (Female Part) 
+Create a solid block (the mold base) and subtract the STL part from it to form the cavity. 
+Define the Mold Box: Create a box slightly larger than your part.
+Boolean Subtraction: Subtract the part from the box.
+Split the Mold: If you need a two-part mold, use split() or bisect_by along a plane (e.g., the XY plane). 
+python
+with BuildPart() as mold_base:
+    # Create a box larger than the part
+    Box(part_stl.bounding_box().size.X + 20, 
+        part_stl.bounding_box().size.Y + 20, 
+        part_stl.bounding_box().size.Z + 10)
+    # Subtract the STL to create the negative cavity
+    add(part_stl, mode=Mode.SUBTRACT)
+
+# Optional: Split into two halves
+mold_bottom = mold_base.part.split(bisect_by=Plane.XY, keep=Keep.BOTTOM)
+Use code with caution.
+
+3. Create the Piston (Male Part)
+The piston is usually a solid block that fits perfectly into the top opening of the mold cavity to compress the material. 
+Piston Geometry: Create a part that matches the interior dimensions of the mold cavity but is slightly undersized (clearance) for movement.
+Add "Piston Head" Detail: If the top of your final part has a specific shape, you may need to subtract that shape from the bottom of your piston. 
+python
+with BuildPart() as piston:
+    # Create a block that fits into the mold's top opening
+    # Apply a small clearance (e.g., 0.1mm) so it can slide
+    Box(part_stl.bounding_box().size.X - 0.2, 
+        part_stl.bounding_box().size.Y - 0.2, 
+        30) 
+    # Align the piston to the mold opening
+    piston.part.move(Location((0, 0, 20))) 
+Use code with caution.
+
+4. Final Refinements
+To ensure a functional 2026-spec mold, add the following mechanical features:
+Alignment Pins: Use Sphere or Cylinder additions and subtractions on the mold halves to ensure they align perfectly when closed.
+Draft Angles: Ensure vertical walls have a slight taper (draft) to allow the part and piston to be removed easily.
+Air Vents: Add small cylinders or wires subtracted from the mold edges to allow trapped air to escape during compression. 
+Summary of Workflow
+Import STL as a solid with Mesher().
+Subtract the STL from a larger Box() to create the cavity.
+Split the cavity if a multi-part mold is required.
+Model a matching Box() for the piston with sliding clearance.
+Export all components as new STLs for 3D printing.
+
+1. Set Up the Headless Script 
+Create a Python file (e.g., make_mold.py). You must import the FreeCAD, Part, and Mesh modules to handle geometry and file operations. 
+python
+import FreeCAD as App
+import Part
+import Mesh
+
+# Initialize a new document
+doc = App.newDocument("CompressionMold")
+Use code with caution.
+
+2. Import and Convert the STL to Solid 
+FreeCAD cannot perform Boolean cuts directly on meshes. You must convert the mesh into a "Shape," then into a "Solid." 
+Read Mesh: Load the STL file.
+Create Shape: Use makeShapeFromMesh with a sewing tolerance (e.g., 0.1).
+Convert to Solid: Use Part.makeSolid to turn the shell into a manifold solid.
+Refine: Use removeSplitter (the API equivalent of "Refine Shape") to clean up faceted faces. 
+python
+# Load STL
+mesh_data = Mesh.read("part.stl")
+shape = Part.Shape()
+shape.makeShapeFromMesh(mesh_data.Topology, 0.1)
+solid_part = Part.makeSolid(shape).removeSplitter()
+Use code with caution.
+
+3. Generate the Mold Cavity 
+Create a block that completely encompasses the part and subtract the part from it. 
+Define Mold Block: Create a Part.makeBox sized slightly larger than the part's bounding box.
+Boolean Cut: Use the .cut() method to remove the part geometry from the block. 
+python
+# Create mold block (adjust dimensions based on part size)
+mold_block = Part.makeBox(100, 100, 50) 
+mold_block.translate(App.Vector(-50, -50, -25)) # Center it
+
+# Create the cavity
+mold_cavity = mold_block.cut(solid_part)
+Use code with caution.
+
+4. Create the Piston
+The piston is a solid that fits the mold's opening to compress material.
+Piston Base: Create another Box matching the mold's internal footprint.
+Add Clearance: To ensure it slides in a real-world application, reduce the piston's width/length by ~0.2mm using a small scaling or manual dimension adjustment.
+Piston Head Shape: If the top of your part is curved, subtract the top portion of the STL solid from the bottom of the piston. 
+python
+piston = Part.makeBox(99.8, 99.8, 30) # 0.2mm clearance
+piston.translate(App.Vector(-49.9, -49.9, 10))
+# Optional: Subtract part top from piston if needed
+# piston = piston.cut(solid_part)
+Use code with caution.
+
+5. Export for Manufacturing
+Save the final components as separate STL files for 3D printing or CNC machining. 
+python
+Mesh.export([Part.show(mold_cavity)], "mold_bottom.stl")
+Mesh.export([Part.show(piston)], "piston.stl")
+Use code with caution.
+
+6. Run the Script
+Execute the script from your terminal using the FreeCADCmd utility: 
+bash
+FreeCADCmd make_mold.py
+
+Would this work so that the piston follows the contour of the parts outside profile?
+Yes, this approach works effectively to make the piston follow the part's contour. By using Boolean operations in headless FreeCAD (or the GUI), you can subtract the imported part from a solid block to create a "mating" surface that perfectly matches the part's profile. 
+How it Works
+Direct Mirroring: When you subtract the solid part from the piston block, the piston's face becomes the exact inverse (negative) of the part's top surface.
+Edge Alignment: If your piston block is sized to the outer dimensions of your part, the piston's outer perimeter will match the part's outer profile exactly.
+Telescopic Fit: In compression molding, this "piston-like" element acts as a male tool that slides into the female mold cavity. Because both were derived from the same STL, they will share identical profile geometry. 
+Key Implementation Details for 2026
+Clearance is Mandatory: A piston that is the exact same size as the cavity will likely jam due to friction or air pressure. You must apply a small offset (typically 0.1mm to 0.2mm) to the piston's outer profile so it can slide freely.
+Refining the Mesh: After converting your STL to a solid, use the removeSplitter() function in Python (or Refine Shape in the GUI). This cleans up the faceted triangular faces from the STL, ensuring the piston's contour is smooth rather than "blocky".
+Draft Angles: For the piston to follow the contour and still be removable, ensure the part's walls have a 2–3 degree draft angle. Without this, the piston's outer edges will "drag" along the mold walls during every cycle. 
+Summary of the Headless Python Step
+To ensure the contour follows the part, your script should:
+Position the solid_part so its top half intersects with your piston_block.
+Use piston = piston_block.cut(solid_part) to "stamp" the part's contour into the piston face. 
