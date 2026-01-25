@@ -19,6 +19,9 @@ LOG_TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 # God mode flag - bypasses all authentication
 GOD_MODE=false
 
+# Build flag - forces Docker image rebuild
+BUILD_STEP_CONVERTER=false
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -152,8 +155,14 @@ start_step_converter() {
         docker network create supabase_network_cadam || true
     fi
 
-    # Start without --build for faster startup (use 'docker compose build' manually if needed)
-    docker compose up -d
+    # Build and start (use --build to ensure code changes are picked up)
+    if [ "$BUILD_STEP_CONVERTER" = true ]; then
+        print_status "Building step-converter image (this may take a moment)..."
+        # Disable BuildKit - it causes hangs with this Dockerfile
+        DOCKER_BUILDKIT=0 docker compose up -d --build
+    else
+        docker compose up -d
+    fi
     print_success "step-converter started on port 8080"
 }
 
@@ -458,6 +467,7 @@ usage() {
     echo "  supabase    Start Supabase only"
     echo "  functions   Start Supabase Functions only"
     echo "  step        Start step-converter only"
+    echo "  step-build  Rebuild and restart step-converter (for code changes)"
     echo "  ngrok       Start ngrok only"
     echo "  vite        Start Vite dev server only"
     echo ""
@@ -479,6 +489,7 @@ usage() {
     echo ""
     echo "Options:"
     echo "  --god-mode  Enable god mode (no login required, all data accessible)"
+    echo "  --build     Force rebuild step-converter Docker image (auto on restart)"
     echo ""
 }
 
@@ -489,9 +500,12 @@ for arg in "$@"; do
         --god-mode)
             GOD_MODE=true
             ;;
+        --build)
+            BUILD_STEP_CONVERTER=true
+            ;;
         *)
             # First non-flag argument is the command
-            if [ "$COMMAND" = "start" ] && [ "$arg" != "--god-mode" ]; then
+            if [ "$COMMAND" = "start" ] && [[ "$arg" != --* ]]; then
                 COMMAND="$arg"
             fi
             ;;
@@ -511,6 +525,8 @@ case "$COMMAND" in
     restart)
         stop_all
         sleep 2
+        # Always rebuild step-converter on restart to pick up code changes
+        BUILD_STEP_CONVERTER=true
         start_all
         ;;
     supabase)
@@ -524,6 +540,12 @@ case "$COMMAND" in
         start_supabase_functions
         ;;
     step)
+        start_step_converter
+        ;;
+    step-build)
+        # Rebuild and restart step-converter
+        stop_step_converter
+        BUILD_STEP_CONVERTER=true
         start_step_converter
         ;;
     ngrok)
